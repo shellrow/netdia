@@ -1,2 +1,2 @@
 # netdia
-[WIP] Network diagnostics
+[WIP] Network Diagnostics

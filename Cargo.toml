@@ -1,0 +1,13 @@
+[package]
+name = "netdia"
+version = "0.0.1"
+edition = "2021"
+authors = ["shellrow <shellrow@protonmail.com>"]
+description = "[WIP] Cross-platform library for Network Diagnostics"
+repository = "https://github.com/shellrow/tracert"
+readme = "README.md"
+keywords = ["network"]
+categories = ["network-programming"]
+license = "MIT"
+
+[dependencies]
