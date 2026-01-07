@@ -31,7 +31,7 @@ Inspect, monitor, and analyze your network.
 
 ## 🚀 Getting Started
 
-### 📦　Using Installer
+### 📦 Using Installer
 Download the installer for your platform from the [releases page](https://github.com/shellrow/netdia/releases).
 
 ### 🦀 Build from source
