@@ -31,17 +31,8 @@ Inspect, monitor, and analyze your network.
 
 ## 🚀 Getting Started
 
-### Using Installer
+### 📦　Using Installer
 Download the installer for your platform from the [releases page](https://github.com/shellrow/netdia/releases).
-
-#### macOS Security
-After installing NetDia on macOS, you may encounter a security warning that prevents the app from opening, stating that it is from an unidentified developer. This is a common macOS security measure for apps downloaded outside of the App Store.
-
-To resolve this issue and open NetDia, you can remove the security attributes that macOS assigns to the application using the following command in the Terminal:
-
-```bash
-xattr -rc "/Applications/NetDia.app"
-```
 
 ### 🦀 Build from source
 ```bash
