@@ -32,7 +32,23 @@ Inspect, monitor, and analyze your network.
 ## 🚀 Getting Started
 
 ### 📦 Using Installer
-Download the installer for your platform from the [releases page](https://github.com/shellrow/netdia/releases).
+
+#### **macOS**
+Download the notarized and signed DMG from the [**Releases page**](https://github.com/shellrow/netdia/releases).  
+Drag & drop to install (Applications folder) 
+
+#### **Windows**
+Available on the [**Microsoft Store**](https://apps.microsoft.com/detail/9NLQ03PT1DXQ)
+
+#### **Linux**
+Available as **AppImage(GPG signed)**, **deb**, and **rpm** packages.
+
+[**Releases page**](https://github.com/shellrow/netdia/releases)
+
+AppImage signature
+```
+3BA76883CE83EC30C03B1399261B16ACBF7FF010
+```
 
 ### 🦀 Build from source
 ```bash
