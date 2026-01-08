@@ -1,6 +1,6 @@
 [package]
 name = "netdia"
-version = "0.4.0"
+version = "0.5.0"
 description = "Cross-platform network diagnostic suite"
 authors = ["shellrow <shellrow@foctal.com>"]
 edition = "2021"
