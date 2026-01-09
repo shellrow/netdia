@@ -1,4 +1,4 @@
 *.css linguist-vendored
-./public/* -linguist-detectable
-./scripts/* -linguist-detectable
-./resources/* -linguist-detectable
+/public/** -linguist-detectable
+/scripts/** -linguist-detectable
+/resources/** -linguist-detectable
