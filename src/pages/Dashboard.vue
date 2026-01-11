@@ -5,12 +5,17 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { NetworkInterface } from "../types/net";
 import { formatBps, formatBytesPerSec, formatBytes } from "../types/net";
 import type { SysInfo } from "../types/system";
-import { fmtIfType, hexFlags, severityByOper } from "../utils/formatter";
+import { fmtIfType, severityByOper } from "../utils/formatter";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
 import { usePrivacyGate } from "../composables/usePrivacyGate";
 import type { ChartData, ChartOptions } from "chart.js";
 import { hexToRgba } from "../utils/color";
+import { DEFAULT_AUTO_INTERNET_CHECK, INTERNET_CHECK_INTERVAL } from "../constants/defaults";
+import { STORAGE_KEYS } from "../constants/storage";
 import { readBpsUnit, type UnitPref } from "../utils/preferences";
+import { useRouter } from "vue-router";
+import type { IpInfoDual } from "../types/internet";
+import { clampInt } from "../utils/numeric";
 
 // @ts-ignore -- used in template refs
 const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
@@ -137,9 +142,13 @@ const trafficOptions = ref<ChartOptions<"line">>({
   },
   scales: {
     x: {
-      title: { display: true, text: "Time" },
+      title: { display: false },
       ticks: {
-        color: textColorSecondary
+        color: textColorSecondary,
+        font: { size: 10 },
+        maxTicksLimit: 8,
+        maxRotation: 0,
+        minRotation: 0,
       },
       grid: {
         color: surfaceBorder
@@ -148,13 +157,15 @@ const trafficOptions = ref<ChartOptions<"line">>({
     y: {
       beginAtZero: true,
       grace: '5%',
-      suggestedMax: 1_000, // Initial max
+      suggestedMax: 1_000,
       ticks: {
         callback(value) {
           const num = typeof value === "number" ? value : Number(value);
           return formatAxisThroughput(Number.isFinite(num) ? num : 0);
         },
-        color: textColorSecondary
+        color: textColorSecondary,
+        font: { size: 10 },
+        maxTicksLimit: 6,
       },
       grid: {
         color: surfaceBorder
@@ -165,14 +176,11 @@ const trafficOptions = ref<ChartOptions<"line">>({
 
 function initTrafficChart() {
   const now = Date.now();
-
   // Generate last 30 seconds labels as initial labels
   const labels = Array.from({ length: 30 }, (_, i) =>
     new Date(now - (29 - i) * 1000).toLocaleTimeString()
   );
-
   const zeros = Array(30).fill(0);
-
   trafficData.value = {
     labels,
     datasets: [
@@ -350,20 +358,444 @@ function togglePrivacy() {
   toggleHostname();
 }
 
+// --- Internet Reachability ---
+function readAutoInternetCheckIntervalS(ls: Storage): number {
+  const raw = ls.getItem(STORAGE_KEYS.AUTO_INTERNET_CHECK_INTERVAL_S);
+  if (raw == null || raw.trim() === "") return INTERNET_CHECK_INTERVAL.DEFAULT;
+
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return INTERNET_CHECK_INTERVAL.DEFAULT;
+
+  return clampInt(
+    Math.floor(n),
+    INTERNET_CHECK_INTERVAL.MIN,
+    INTERNET_CHECK_INTERVAL.MAX,
+  );
+}
+
+function readAutoInternetCheck(ls: Storage): boolean {
+  const v = ls.getItem(STORAGE_KEYS.AUTO_INTERNET_CHECK);
+  if (v == null) return DEFAULT_AUTO_INTERNET_CHECK;
+  return v === "1" || v.toLowerCase() === "true";
+}
+
+function writeAutoInternetCheck(ls: Storage, enabled: boolean) {
+  ls.setItem(STORAGE_KEYS.AUTO_INTERNET_CHECK, enabled ? "1" : "0");
+}
+
+const autoInternetCheck = ref<boolean>(readAutoInternetCheck(localStorage));
+const autoInternetCheckIntervalS = ref<number>(
+  readAutoInternetCheckIntervalS(localStorage),
+);
+
+function refreshAutoInternetCheckIntervalPref() {
+  autoInternetCheckIntervalS.value = readAutoInternetCheckIntervalS(localStorage);
+}
+
+function refreshAutoInternetCheckPref() {
+  autoInternetCheck.value = readAutoInternetCheck(localStorage);
+}
+
+function startIpInfoTimer(manual: boolean = false) {
+  if (ipInfoTimer) clearInterval(ipInfoTimer);
+  if (!autoInternetCheck.value) {
+    ipInfoTimer = null;
+    return;
+  }
+  refreshIpInfo(manual);
+  const intervalMs = autoInternetCheckIntervalS.value * 1000;
+  ipInfoTimer = window.setInterval(() => refreshIpInfo(false), intervalMs);
+}
+
+function toggleAutoInternetCheck() {
+  const prev = autoInternetCheck.value;
+  autoInternetCheck.value = !prev;
+  writeAutoInternetCheck(localStorage, autoInternetCheck.value);
+  startIpInfoTimer(!prev && autoInternetCheck.value);
+}
+
+// --- Public IP / Reachability ---
+const ipInfo = ref<IpInfoDual | null>(null);
+const ipInfoLoading = ref(false);
+const ipInfoError = ref<string | null>(null);
+const ipInfoLastOkAt = ref<number | null>(null);
+
+let ipInfoTimer: number | null = null;
+
+async function refreshIpInfo(manual: boolean = false) {
+  if (!autoInternetCheck.value && !manual) return;
+  if (ipInfoLoading.value && !manual) return;
+  ipInfoLoading.value = true;
+  try {
+    const data = (await invoke("get_public_ip_info")) as IpInfoDual;
+    ipInfo.value = data ?? null;
+    ipInfoError.value = null;
+    ipInfoLastOkAt.value = Date.now();
+  } catch (e: any) {
+    ipInfoError.value = String(e?.message ?? e);
+  } finally {
+    ipInfoLoading.value = false;
+  }
+}
+
+function isReachable(): boolean {
+  const v4 = ipInfo.value?.ipv4?.ip_addr;
+  const v6 = ipInfo.value?.ipv6?.ip_addr;
+  return !!v4 || !!v6;
+}
+
+function internetHealth(): Health {
+  if (!ipInfoLastOkAt.value && !autoInternetCheck.value) return "unknown"; 
+  if (!ipInfoLastOkAt.value && !ipInfoError.value) return "unknown";
+  if (ipInfoError.value) return "bad";
+  return isReachable() ? "ok" : "warn";
+}
+
+function publicIpSubtitle(): string {
+  if (!ipInfoLastOkAt.value && !autoInternetCheck.value) return "Auto check is OFF";
+  if (!ipInfoLastOkAt.value && !ipInfoError.value) return "Checking...";
+  if (ipInfoError.value) return "Check failed";
+  if (!publicIpVisible.value) return "Hidden";
+
+  const v4 = ipInfo.value?.ipv4?.ip_addr;
+  const v6 = ipInfo.value?.ipv6?.ip_addr;
+  if (v4) return pubIpGate(v4);
+  if (v6) return pubIpGate(v6);
+  return "Not detected";
+}
+
+function internetSubtitle(): string {
+  const h = internetHealth();
+  if (h === "unknown") return "Unknown";
+  if (h === "bad") return "Unreachable";
+  if (h === "warn") return "No public IP";
+  return "Reachable";
+}
+
+function publicAsSummary(): string {
+  if (!ipInfo.value) return "IPv4 / IPv6";
+
+  const v4 = ipInfo.value.ipv4;
+  const v6 = ipInfo.value.ipv6;
+
+  const asName =
+    v4?.as_name ||
+    v6?.as_name ||
+    v4?.asn ||
+    v6?.asn ||
+    null;
+
+  if (!asName) return "IPv4 / IPv6";
+
+  return pubIpGate(asName);
+}
+
+// --- Network Path ---
+type Health = "ok" | "warn" | "bad" | "unknown";
+type PathNodeType = "device" | "iface" | "gateway" | "dns" | "public" | "internet";
+
+type PathNode = {
+  type: PathNodeType;
+  title: string;
+  subtitle?: string;
+  summary?: string;
+  icon: string;
+  health: Health;
+  color: string;
+  onClick?: () => void;
+};
+
+// --- Path node detail dialog ---
+type PathDetailKind = "gateway" | "dns" | null;
+
+const pathDetailOpen = ref(false);
+const pathDetailKind = ref<PathDetailKind>(null);
+
+function openPathDetail(kind: Exclude<PathDetailKind, null>) {
+  pathDetailKind.value = kind;
+  pathDetailOpen.value = true;
+}
+
+const gwDetail = computed(() => {
+  const iface = defaultIface.value;
+  const gw = iface?.gateway;
+  if (!gw) return null;
+  return {
+    mac: gw.mac_addr ?? null,
+    ipv4: gw.ipv4 ?? [],
+    ipv6: gw.ipv6 ?? [],
+  };
+});
+
+const dnsDetail = computed(() => {
+  const iface = defaultIface.value;
+  return {
+    servers: iface?.dns_servers ?? [],
+  };
+});
+
+const router = useRouter();
+
+function healthColor(h: Health) {
+  const s = getComputedStyle(document.documentElement);
+  switch (h) {
+    case "ok": return s.getPropertyValue("--p-green-500").trim() || "var(--green-500)";
+    case "warn": return s.getPropertyValue("--p-yellow-500").trim() || "var(--yellow-500)";
+    case "bad": return s.getPropertyValue("--p-red-500").trim() || "var(--red-500)";
+    default: return s.getPropertyValue("--p-surface-400").trim() || "var(--surface-400)";
+  }
+}
+
+const pathNodes = computed<PathNode[]>(() => {
+  const n: PathNode[] = [];
+
+  // 1. This device
+  n.push({
+    type: "device",
+    title: "This Device",
+    subtitle: hostnameVisible.value && sys.value?.hostname ? sys.value.hostname : "Hostname hidden",
+    summary: sys.value ? `${sys.value.os_type ?? ""} ${sys.value.architecture ?? ""}`.trim() : "",
+    icon: "pi pi-desktop",
+    health: sys.value ? "ok" : "unknown",
+    color: healthColor(sys.value ? "ok" : "unknown"),
+  });
+
+  // 2. Default interface
+  const iface = defaultIface.value;
+  n.push({
+    type: "iface",
+    title: "Default IF",
+    subtitle: iface ? iface.name : "Not detected",
+    summary: iface?.ipv4?.[0]
+      ? `IPv4: ${maskIpLabel(iface.ipv4[0])}`
+      : (iface ? "No IPv4" : ""),
+    icon: "pi pi-sitemap",
+    health: iface ? "ok" : "bad",
+    color: healthColor(iface ? "ok" : "bad"),
+    onClick: () => router.push({ name: "interfaces" }),
+  });
+
+  // 3. Gateway
+  const gwv4 = iface?.gateway?.ipv4?.[0];
+  const gwv6 = iface?.gateway?.ipv6?.[0];
+  const gwIp = gwv4 || gwv6 || "";
+  n.push({
+    type: "gateway",
+    title: "Gateway",
+    subtitle: gwIp ? pubIpGate(gwIp) : "Not found",
+    summary: iface?.gateway?.mac_addr ? `MAC: ${maskMac(iface.gateway.mac_addr)}` : "",
+    icon: "pi pi-directions",
+    health: gwIp ? "ok" : "warn",
+    color: healthColor(gwIp ? "ok" : "warn"),
+    onClick: () => openPathDetail("gateway"),
+  });
+
+  // 4. DNS
+  const dns = iface?.dns_servers ?? [];
+  n.push({
+    type: "dns",
+    title: "DNS",
+    subtitle: dns.length ? pubIpGate(dns[0]) : "Not set",
+    summary: dns.length > 1 ? `+${dns.length - 1} more` : "",
+    icon: "pi pi-server",
+    health: dns.length ? "ok" : "warn",
+    color: healthColor(dns.length ? "ok" : "warn"),
+    onClick: () => openPathDetail("dns"),
+  });
+
+  // 5. Public IP
+  n.push({
+    type: "public",
+    title: "Public IP",
+    subtitle: publicIpSubtitle(),
+    summary: publicAsSummary(),
+    icon: "pi pi-globe",
+    health: internetHealth(),
+    color: healthColor(internetHealth()),
+    onClick: () => router.push({ name: "internet" }),
+  });
+
+  // 6. Internet reachability
+  n.push({
+    type: "internet",
+    title: "Internet",
+    subtitle: internetSubtitle(),
+    summary: "",
+    icon: "pi pi-wifi",
+    health: internetHealth(),
+    color: healthColor(internetHealth()),
+    onClick: () => router.push({ name: "internet" }),
+  });
+
+  return n;
+});
+
+function onPathNodeClick(node: PathNode) {
+  node.onClick?.();
+}
+
+const onStorage = () => {
+  refreshUnitPref();
+  const prevEnabled = autoInternetCheck.value;
+  const prevInterval = autoInternetCheckIntervalS.value;
+
+  refreshAutoInternetCheckPref();
+  refreshAutoInternetCheckIntervalPref();
+
+  if (autoInternetCheck.value) {
+    const enabledChanged = prevEnabled !== autoInternetCheck.value;
+    const intervalChanged = prevInterval !== autoInternetCheckIntervalS.value;
+    if (enabledChanged || intervalChanged) startIpInfoTimer(false);
+  } else {
+    if (ipInfoTimer) {
+      clearInterval(ipInfoTimer);
+      ipInfoTimer = null;
+    }
+  }
+};
+
 onMounted(async () => {
   initTrafficChart();
   refreshUnitPref();
   await fetchAll();
+
   unlistenStats = await listen("stats_updated", onStatsUpdated);
   unlistenIfaces = await listen("interfaces_updated", onInterfacesUpdated);
-  window.addEventListener("storage", refreshUnitPref);
+  window.addEventListener("storage", onStorage);
+
+  startIpInfoTimer();
 });
+
 onBeforeUnmount(() => {
   unlistenStats?.();
   unlistenIfaces?.();
-  window.removeEventListener("storage", refreshUnitPref);
+  window.removeEventListener("storage", onStorage);
+
+  if (ipInfoTimer) {
+    clearInterval(ipInfoTimer);
+    ipInfoTimer = null;
+  }
+
 });
 </script>
+
+<style scoped>
+.nd-marker {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  border-radius: 9999px;
+  box-shadow: var(--shadow-2);
+  z-index: 10;
+}
+
+.nd-node-card {
+  cursor: pointer;
+  user-select: none;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+  min-width: 210px;
+}
+
+.nd-node-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-3);
+}
+
+.nd-path-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 0.25rem;
+}
+
+::v-deep(.nd-path-timeline .p-timeline-event) {
+  flex: 0 0 auto;
+}
+
+::v-deep(.nd-path-timeline .p-timeline-event-content),
+::v-deep(.nd-path-timeline .p-timeline-event-opposite) {
+  flex: 0 0 auto;
+}
+
+::v-deep(.nd-path-timeline .p-timeline) {
+  min-width: max-content;
+}
+
+.nd-path-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+/* WebKit (Chromium / Safari / WebView) */
+.nd-path-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.nd-path-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.nd-path-scroll::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.nd-path-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.28);
+}
+
+.nd-path-scroll:active::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.36);
+}
+
+.nd-marker {
+  width: 24px;
+  height: 24px;
+}
+
+::v-deep(.nd-path-timeline .p-timeline-event-separator) {
+  min-height: 24px;
+}
+
+::v-deep(.nd-path-timeline.p-timeline) {
+  padding-top: 0.5rem !important;
+  padding-bottom: 0 !important;
+}
+
+::v-deep(.nd-path-timeline .p-timeline-event) {
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+::v-deep(.nd-path-timeline .p-timeline-event-opposite),
+::v-deep(.nd-path-timeline .p-timeline-event-content) {
+  padding: 0 !important;
+  margin: 0 !important;
+  min-height: 0 !important;
+}
+
+::v-deep(.nd-path-timeline .p-timeline-event-content) {
+  padding-top: 0.25rem !important;
+}
+
+.nd-card-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.2px;
+}
+
+</style>
 
 <template>
   <div
@@ -396,14 +828,24 @@ onBeforeUnmount(() => {
           @click="togglePrivacy"
           class="w-9 h-9"
           severity="secondary"
+          title="Toggle privacy filters"
+        />
+        <Button
+          outlined
+          :icon="autoInternetCheck ? 'pi pi-globe' : 'pi pi-times-circle'"
+          @click="toggleAutoInternetCheck"
+          class="w-9 h-9"
+          severity="secondary"
+          :title="autoInternetCheck ? 'Auto Internet Check: ON' : 'Auto Internet Check: OFF'"
         />
         <Button
           outlined
           icon="pi pi-refresh"
           :loading="loading"
-          @click="fetchAll"
+          @click="fetchAll(); refreshIpInfo(true)"
           class="w-9 h-9"
           severity="secondary"
+          title="Refresh data manually"
         />
       </div>
     </div>
@@ -415,36 +857,89 @@ onBeforeUnmount(() => {
         class="flex-1 min-h-0"
       >
         <div
-          class="grid grid-cols-1 xl:grid-cols-2 gap-2 content-start auto-rows-max p-1"
+          class="grid grid-cols-1 xl:grid-cols-2 gap-2 content-start auto-rows-max p-1 items-stretch"
         >
-          <!-- Default Interface -->
-          <Card>
-            <template #title>Default Interface</template>
+          <!-- Network Path -->
+          <Card class="xl:col-span-2 nd-path-card">
+            <template #title>
+              <div class="nd-card-title flex items-center gap-2">
+                <i class="pi pi-share-alt text-surface-500"></i>
+                <span>Network Path</span>
+                <span class="text-xs text-surface-500 ml-2">Click a node to open details</span>
+              </div>
+            </template>
             <template #content>
-              <div class="flex flex-col gap-4 text-sm">
+              <div class="nd-path-scroll">
+                <Timeline
+                  :value="pathNodes"
+                  layout="horizontal"
+                  align="top"
+                  class="nd-path-timeline"
+                >
+                  <template #marker="{ item }">
+                    <span class="nd-marker" :style="{ backgroundColor: item.color }">
+                      <i :class="item.icon"></i>
+                    </span>
+                  </template>
+
+                  <template #content="{ item }">
+                    <Card class="nd-node-card" @click="onPathNodeClick(item)">
+                      <template #title>
+                        <div class="text-sm font-semibold">{{ item.title }}</div>
+                      </template>
+                      <template #subtitle>
+                        <div
+                          class="text-xs font-mono truncate"
+                          :class="{ 'text-surface-500': !publicIpVisible }"
+                        >
+                          {{ item.subtitle ?? "" }}
+                        </div>
+                      </template>
+                      <template #content>
+                        <div class="text-xs text-surface-500 line-clamp-2">
+                          {{ item.summary ?? "" }}
+                        </div>
+                      </template>
+                    </Card>
+                  </template>
+                </Timeline>
+              </div>
+            </template>
+          </Card>
+          <!-- Default Interface -->
+          <Card class="h-full">
+            <template #title>
+              <div class="nd-card-title flex items-center justify-between gap-2">
+                <!-- left -->
+                <div class="flex items-center gap-2 min-w-0">
+                  <i class="pi pi-arrows-h text-surface-500"></i>
+                  <span>Default Interface</span>
+                </div>
+
+                <!-- right -->
+                <div v-if="defaultIface" class="flex items-center gap-2 min-w-0">
+                  <span class="text-sm truncate">
+                    {{ defaultIface.display_name }}
+                  </span>
+                  <Tag
+                    class="text-[11px]! py-0.5!"
+                    v-if="defaultIface.oper_state"
+                    :value="defaultIface.oper_state"
+                    :severity="severityByOper(defaultIface.oper_state)"
+                  />
+                </div>
+
+                <div v-else class="text-xs text-surface-500">
+                  No default interface
+                </div>
+              </div>
+            </template>
+            <template #content>
+              <div class="flex flex-col gap-4 text-sm h-full">
                 <div v-if="!defaultIface" class="text-surface-500">
                   No default interface detected.
                 </div>
-
                 <div v-else class="flex flex-col gap-4 text-sm">
-                  <!-- Header -->
-                  <div class="flex items-center gap-3">
-                    <i class="pi pi-arrows-h text-surface-500"></i>
-                    <span class="font-bold truncate">
-                      {{ defaultIface.name }}
-                    </span>
-                    <Tag
-                      v-if="defaultIface.oper_state"
-                      :value="defaultIface.oper_state"
-                      :severity="severityByOper(defaultIface.oper_state)"
-                    />
-                    <Tag
-                      v-if="defaultIface.default"
-                      value="Default"
-                      severity="info"
-                    />
-                  </div>
-
                   <!-- Overview / Performance -->
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <!-- Overview -->
@@ -452,48 +947,13 @@ onBeforeUnmount(() => {
                       class="rounded-xl border border-surface-200 dark:border-surface-700 p-3"
                     >
                       <div class="font-semibold mb-2">Overview</div>
-                      <div class="space-y-1">
-                        <div>
-                          <span class="text-surface-500">Index:</span>
-                          <span class="font-mono">
-                            {{ defaultIface.index }}
-                          </span>
-                        </div>
-                        <div>
-                          <span class="text-surface-500">Type:</span>
-                          <span>{{ fmtIfType(defaultIface.if_type) }}</span>
-                        </div>
-                        <div>
-                          <span class="text-surface-500">Friendly:</span>
-                          <span>
-                            {{ defaultIface.friendly_name ?? "-" }}
-                          </span>
-                        </div>
-                        <div>
-                          <span class="text-surface-500">Description:</span>
-                          <span>
-                            {{ defaultIface.description ?? "-" }}
-                          </span>
-                        </div>
-                        <div>
-                          <span class="text-surface-500">MAC:</span>
-                          <span
-                            class="font-mono copyable"
-                            :class="{ 'text-surface-500': !publicIpVisible }"
-                          >
-                            {{ maskMac(defaultIface.mac_addr) }}
-                          </span>
-                        </div>
-                        <div>
-                          <span class="text-surface-500">MTU:</span>
-                          <span>{{ defaultIface.mtu ?? "-" }}</span>
-                        </div>
-                        <div>
-                          <span class="text-surface-500">Flags:</span>
-                          <span class="font-mono">
-                            {{ hexFlags(defaultIface.flags) }}
-                          </span>
-                        </div>
+                      <div class="grid grid-cols-[90px_1fr] gap-x-3 gap-y-1 text-sm">
+                        <div class="text-surface-500">Index:</div><div class="font-mono">{{ defaultIface.index }}</div>
+                        <div class="text-surface-500">Type:</div><div>{{ fmtIfType(defaultIface.if_type) }}</div>
+                        <div class="text-surface-500">Friendly:</div><div class="truncate">{{ defaultIface.friendly_name ?? "-" }}</div>
+                        <div class="text-surface-500">Description:</div><div class="truncate">{{ defaultIface.description ?? "-" }}</div>
+                        <div class="text-surface-500">MAC:</div><div class="font-mono">{{ maskMac(defaultIface.mac_addr) }}</div>
+                        <div class="text-surface-500">MTU:</div><div>{{ defaultIface.mtu ?? "-" }}</div>
                       </div>
                     </div>
 
@@ -504,7 +964,7 @@ onBeforeUnmount(() => {
                       <div class="font-semibold mb-2">Performance</div>
                       <div class="grid grid-cols-2 gap-3">
                         <div
-                          class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3"
+                          class="rounded-lg bg-surface-50 dark:bg-surface-900 p-2"
                         >
                           <div class="text-surface-500 text-xs">
                             {{ rxLabel }}
@@ -518,7 +978,7 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
                         <div
-                          class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3"
+                          class="rounded-lg bg-surface-50 dark:bg-surface-900 p-2"
                         >
                           <div class="text-surface-500 text-xs">
                             {{ txLabel }}
@@ -532,7 +992,7 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
                         <div
-                          class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3"
+                          class="rounded-lg bg-surface-50 dark:bg-surface-900 p-2"
                         >
                           <div class="text-surface-500 text-xs">
                             RX total bytes
@@ -542,7 +1002,7 @@ onBeforeUnmount(() => {
                           </div>
                         </div>
                         <div
-                          class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3"
+                          class="rounded-lg bg-surface-50 dark:bg-surface-900 p-2"
                         >
                           <div class="text-surface-500 text-xs">
                             TX total bytes
@@ -601,115 +1061,50 @@ onBeforeUnmount(() => {
                           >-</span
                         >
                       </div>
-                      <div
-                        class="text-xs text-surface-500 mt-2"
-                        v-if="(defaultIface.ipv6_scope_ids?.length ?? 0) > 0"
-                      >
-                        Scope IDs:
-                        <span class="font-mono">
-                          {{
-                            (defaultIface.ipv6_scope_ids ?? []).join(", ")
-                          }}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Routing / DNS -->
-                  <div
-                    class="rounded-xl border border-surface-200 dark:border-surface-700 p-3"
-                  >
-                    <div class="font-semibold mb-2">Routing / DNS</div>
-                    <div class="flex flex-wrap gap-6">
-                      <div>
-                        <div class="text-surface-500 text-xs">Gateway</div>
-                        <div class="mt-1">
-                          <template v-if="defaultIface.gateway">
-                            MAC: 
-                            <span
-                              class="font-mono copyable"
-                              :class="{ 'text-surface-500': !publicIpVisible }"
-                            >
-                              {{ maskMac(defaultIface.gateway.mac_addr) }}
-                            </span>
-                            <div v-if="defaultIface.gateway.ipv4.length > 0">
-                              IPv4:
-                              <span
-                                class="font-mono copyable"
-                                :class="{ 'text-surface-500': !publicIpVisible }"
-                              >
-                                {{ pubIpGate(defaultIface.gateway.ipv4.join(", ")) }}
-                              </span>
-                            </div>
-                            <div v-if="defaultIface.gateway.ipv6.length > 0">
-                              IPv6:
-                              <span
-                                class="font-mono copyable"
-                                :class="{ 'text-surface-500': !publicIpVisible }"
-                              >
-                                {{ pubIpGate(defaultIface.gateway.ipv6.join(", ")) }}
-                              </span>
-                            </div>
-                          </template>
-                          <span v-else>-</span>
-                        </div>
-                      </div>
-                      <div>
-                        <div class="text-surface-500 text-xs">DNS</div>
-                        <div class="mt-1 flex flex-wrap gap-2">
-                          <Chip
-                            v-for="(d, i) in defaultIface.dns_servers ?? []"
-                            :key="'dns-' + i"
-                            :label="d"
-                            class="font-mono copyable"
-                          />
-                          <span
-                            v-if="(defaultIface.dns_servers?.length ?? 0) === 0"
-                            >-</span
-                          >
-                        </div>
-                      </div>
                     </div>
                   </div>
                 </div>
                 <!-- /else -->
+                 <div class="flex-1"></div>
               </div>
             </template>
           </Card>
 
           <!-- Live Traffic -->
-          <Card>
+          <Card class="h-full">
             <template #title>
-              <div v-if="defaultIface">
-                Live Traffic - {{ defaultIface.display_name }}
-              </div>
-              <div v-else>
-                Live Traffic (No default interface)
+              <div class="nd-card-title flex items-center justify-between gap-2">
+                <!-- left -->
+                <div class="flex items-center gap-2 min-w-0">
+                  <i class="pi pi-chart-line text-surface-500"></i>
+                  <span>Live Traffic</span>
+                </div>
+
+                <!-- right -->
+                <div class="flex items-center gap-2 min-w-0">
+                  <span v-if="defaultIface" class="text-sm truncate">
+                    {{ defaultIface.display_name }}
+                  </span>
+                  <span v-else class="text-xs text-surface-500">
+                    No default interface
+                  </span>
+
+                  <span class="text-xs text-surface-500 hidden sm:inline">
+                    Real-time RX/TX
+                  </span>
+                </div>
               </div>
             </template>
             <template #content>
-              <div class="flex flex-col gap-3 text-sm">
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-2">
-                    <i class="pi pi-chart-line text-surface-500"></i>
-                    <span class="text-surface-500">
-                      Real-time RX/TX throughput
-                    </span>
-                  </div>
-                  <div class="text-xs text-surface-500">
-                    Unit:
-                    <span class="font-mono">{{ bpsUnit }}</span>
-                  </div>
+              <div class="flex flex-col gap-3 text-sm h-full">
+                <div class="flex-1 min-h-75">
+                  <Chart
+                    type="line"
+                    :data="trafficData"
+                    :options="trafficOptions"
+                    class="w-full h-full"
+                  />
                 </div>
-
-                <Chart
-                  type="line"
-                  :data="trafficData"
-                  :options="trafficOptions"
-                  :height="320"
-                  class="w-full"
-                />
-
                 <div class="grid grid-cols-2 gap-3 mt-2">
                   <!-- RX stats -->
                   <div class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3">
@@ -760,4 +1155,110 @@ onBeforeUnmount(() => {
       </ScrollPanel>
     </div>
   </div>
+
+  <Dialog
+    v-model:visible="pathDetailOpen"
+    modal
+    :dismissableMask="true"
+    :draggable="false"
+    :style="{ width: 'min(720px, 92vw)' }"
+  >
+    <template #header>
+      <div class="flex items-center gap-2">
+        <i
+          class="pi"
+          :class="pathDetailKind === 'gateway' ? 'pi-directions' : 'pi-server'"
+        />
+        <span class="font-semibold">
+          {{ pathDetailKind === 'gateway' ? 'Gateway Details' : 'DNS Details' }}
+        </span>
+      </div>
+    </template>
+
+    <!-- Gateway -->
+    <div v-if="pathDetailKind === 'gateway'" class="text-sm space-y-3">
+      <div v-if="!gwDetail" class="text-surface-500">No gateway detected.</div>
+
+      <div v-else class="space-y-3">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div class="rounded-lg border border-surface-200 dark:border-surface-700 p-3">
+            <div class="text-xs text-surface-500 mb-1">MAC</div>
+            <div class="font-mono">
+              {{ maskMac(gwDetail.mac) }}
+            </div>
+          </div>
+
+          <div class="rounded-lg border border-surface-200 dark:border-surface-700 p-3">
+            <div class="text-xs text-surface-500 mb-1">From Interface</div>
+            <div class="font-mono">
+              {{ defaultIface?.name ?? '-' }}
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-lg border border-surface-200 dark:border-surface-700 p-3">
+          <div class="text-xs text-surface-500 mb-2">IPv4</div>
+          <div class="flex flex-wrap gap-2">
+            <Chip
+              v-for="(ip, i) in gwDetail.ipv4"
+              :key="'gw4-' + i"
+              :label="pubIpGate(ip)"
+              class="font-mono copyable"
+              :class="{ 'text-surface-500': !publicIpVisible }"
+            />
+            <span v-if="gwDetail.ipv4.length === 0">-</span>
+          </div>
+
+          <div class="text-xs text-surface-500 mt-3 mb-2">IPv6</div>
+          <div class="flex flex-wrap gap-2">
+            <Chip
+              v-for="(ip, i) in gwDetail.ipv6"
+              :key="'gw6-' + i"
+              :label="pubIpGate(ip)"
+              class="font-mono copyable"
+              :class="{ 'text-surface-500': !publicIpVisible }"
+            />
+            <span v-if="gwDetail.ipv6.length === 0">-</span>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-1">
+          <Button
+            label="Check Routes"
+            icon="pi pi-external-link"
+            severity="secondary"
+            outlined
+            @click="router.push({ name: 'routes' }); pathDetailOpen=false;"
+          />
+        </div>
+      </div>
+    </div>
+
+    <!-- DNS -->
+    <div v-else-if="pathDetailKind === 'dns'" class="text-sm space-y-3">
+      <div class="rounded-lg border border-surface-200 dark:border-surface-700 p-3">
+        <div class="text-xs text-surface-500 mb-2">DNS Servers</div>
+        <div class="flex flex-wrap gap-2">
+          <Chip
+            v-for="(d, i) in dnsDetail.servers"
+            :key="'dns-' + i"
+            :label="pubIpGate(d)"
+            class="font-mono copyable"
+            :class="{ 'text-surface-500': !publicIpVisible }"
+          />
+          <span v-if="dnsDetail.servers.length === 0">-</span>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-1">
+        <Button
+          label="Check DNS"
+          icon="pi pi-external-link"
+          severity="secondary"
+          outlined
+          @click="router.push({ name: 'dns' }); pathDetailOpen=false;"
+        />
+      </div>
+    </div>
+  </Dialog>
 </template>
