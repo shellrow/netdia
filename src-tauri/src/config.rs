@@ -24,6 +24,10 @@ pub struct AppConfig {
     pub data_unit: String,
     /// Logging configuration.
     pub logging: LoggingConfig,
+    /// Auto internet check
+    pub auto_internet_check: bool,
+    /// Auto internet check interval in seconds
+    pub auto_internet_check_interval_s: u64,
 }
 
 // Implement default
@@ -42,6 +46,8 @@ impl AppConfig {
             theme: "system".to_string(),
             data_unit: bps_unit::BITS.to_string(),
             logging: LoggingConfig::new(),
+            auto_internet_check: true,
+            auto_internet_check_interval_s: 60,
         }
     }
     pub fn load() -> AppConfig {

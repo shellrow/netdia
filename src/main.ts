@@ -42,6 +42,8 @@ import Checkbox from 'primevue/checkbox';
 import CheckboxGroup from 'primevue/checkboxgroup';
 import Textarea from 'primevue/textarea';
 import Chart from 'primevue/chart';
+import Timeline from 'primevue/timeline';
+import { STORAGE_KEYS } from "./constants/storage";
 
 const ThemePreset = definePreset(Aura, {
     semantic: {
@@ -83,11 +85,13 @@ async function initConfigFromTauri() {
   try {
     const cfg: AppConfig = await invoke("get_config");
     if (cfg) {
-      localStorage.setItem("np:config", JSON.stringify(cfg));
-      localStorage.setItem("np:set:theme", cfg.theme);
-      localStorage.setItem("np:set:refresh_ms", String(cfg.refresh_interval_ms));
-      localStorage.setItem("np:set:bps_unit", cfg.data_unit);
-      localStorage.setItem("np:set:autostart", cfg.startup ? "1" : "0");
+      localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(cfg));
+      localStorage.setItem(STORAGE_KEYS.THEME, cfg.theme);
+      localStorage.setItem(STORAGE_KEYS.REFRESH_INTERVAL_MS, String(cfg.refresh_interval_ms));
+      localStorage.setItem(STORAGE_KEYS.BPS_UNIT, cfg.data_unit);
+      localStorage.setItem(STORAGE_KEYS.AUTOSTART, cfg.startup ? "1" : "0");
+      localStorage.setItem(STORAGE_KEYS.AUTO_INTERNET_CHECK, cfg.auto_internet_check ? "1" : "0");
+      localStorage.setItem(STORAGE_KEYS.AUTO_INTERNET_CHECK_INTERVAL_S, String(cfg.auto_internet_check_interval_s));
     }
   } catch (e) {
     console.error("Failed to load config from Tauri:", e);
@@ -139,6 +143,7 @@ app.component('Checkbox', Checkbox);
 app.component('CheckboxGroup', CheckboxGroup);
 app.component('Textarea', Textarea);
 app.component('Chart', Chart);
+app.component('Timeline', Timeline);
 
 app.directive('tooltip', Tooltip);
 app.directive('styleclass', StyleClass);
