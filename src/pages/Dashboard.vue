@@ -565,7 +565,7 @@ const pathNodes = computed<PathNode[]>(() => {
   n.push({
     type: "iface",
     title: "Default IF",
-    subtitle: iface ? iface.name : "Not detected",
+    subtitle: iface ? iface.display_name : "Not detected",
     summary: iface?.ipv4?.[0]
       ? `IPv4: ${maskIpLabel(iface.ipv4[0])}`
       : (iface ? "No IPv4" : ""),
@@ -918,9 +918,10 @@ onBeforeUnmount(() => {
 
                 <!-- right -->
                 <div v-if="defaultIface" class="flex items-center gap-2 min-w-0">
-                  <span class="text-sm truncate">
-                    {{ defaultIface.display_name }}
+                  <span class="text-sm truncate" v-if="defaultIface.friendly_name">
+                    {{ defaultIface.friendly_name }}
                   </span>
+                  <Tag class="text-[11px]! py-0.5!" :value="defaultIface.name" severity="secondary"></Tag>
                   <Tag
                     class="text-[11px]! py-0.5!"
                     v-if="defaultIface.oper_state"
@@ -952,7 +953,7 @@ onBeforeUnmount(() => {
                         <div class="text-surface-500">Type:</div><div>{{ fmtIfType(defaultIface.if_type) }}</div>
                         <div class="text-surface-500">Friendly:</div><div class="truncate">{{ defaultIface.friendly_name ?? "-" }}</div>
                         <div class="text-surface-500">Description:</div><div class="truncate">{{ defaultIface.description ?? "-" }}</div>
-                        <div class="text-surface-500">MAC:</div><div class="font-mono">{{ maskMac(defaultIface.mac_addr) }}</div>
+                        <div class="text-surface-500">MAC:</div><div class="font-mono copyable">{{ maskMac(defaultIface.mac_addr) }}</div>
                         <div class="text-surface-500">MTU:</div><div>{{ defaultIface.mtu ?? "-" }}</div>
                       </div>
                     </div>
@@ -1082,9 +1083,12 @@ onBeforeUnmount(() => {
 
                 <!-- right -->
                 <div class="flex items-center gap-2 min-w-0">
-                  <span v-if="defaultIface" class="text-sm truncate">
-                    {{ defaultIface.display_name }}
-                  </span>
+                  <div v-if="defaultIface" class="flex items-center gap-2">
+                    <span class="text-sm truncate" v-if="defaultIface.friendly_name">
+                      {{ defaultIface.friendly_name }}
+                    </span>
+                    <Tag class="text-[11px]! py-0.5!" :value="defaultIface.name" severity="secondary"></Tag>
+                  </div>
                   <span v-else class="text-xs text-surface-500">
                     No default interface
                   </span>
