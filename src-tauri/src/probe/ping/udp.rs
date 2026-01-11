@@ -94,7 +94,7 @@ pub async fn udp_ping_icmp_unreach(
     let mut received = 0u32;
 
     for seq in 1..=setting.count {
-        let payload = Bytes::from_static(b"np:udp-probe");
+        let payload = Bytes::from_static(b"netd");
         let sent_at = Instant::now();
 
         let mut status = ProbeStatus::new();

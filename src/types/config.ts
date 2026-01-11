@@ -9,4 +9,6 @@ export interface AppConfig {
   theme: "system" | "light" | "dark";
   data_unit: "bits" | "bytes";
   logging: LoggingConfig;
+  auto_internet_check: boolean;
+  auto_internet_check_interval_s: number;
 }

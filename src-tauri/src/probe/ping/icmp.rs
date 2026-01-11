@@ -63,7 +63,7 @@ pub async fn icmp_ping(
     let target = SocketAddr::new(setting.ip_addr, 0);
 
     let echo_id: u16 = 0x1234;
-    let payload = b"np:ping";
+    let payload = b"netd";
 
     let mut samples = Vec::with_capacity(setting.count as usize);
     let mut rtts_ok = Vec::<u64>::new();

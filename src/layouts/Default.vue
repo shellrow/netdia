@@ -3,15 +3,15 @@ import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { RouteRecordName, useRoute } from "vue-router";
 import { useTheme } from "../composables/useTheme";
 import { getName as getAppName, getVersion as getAppVersion } from "@tauri-apps/api/app";
+import { STORAGE_KEYS } from "../constants/storage";
 
 const innerWidth = ref(window.innerWidth);
 const innerHeight = ref(window.innerHeight);
 const { currentLogoFile } = useTheme();
-const LS_COMPACT = "np:sidebar:compact";
-const stored = localStorage.getItem(LS_COMPACT);
+const stored = localStorage.getItem(STORAGE_KEYS.SIDEBAR_COMPACT);
 const isCompact = ref(stored != null ? stored === "1" : true);
 watch(isCompact, v => {
-  localStorage.setItem(LS_COMPACT, v ? "1" : "0");
+  localStorage.setItem(STORAGE_KEYS.SIDEBAR_COMPACT, v ? "1" : "0");
 });
 const route = useRoute();
 const isActive = (name: string) => computed(() => route.name === name);

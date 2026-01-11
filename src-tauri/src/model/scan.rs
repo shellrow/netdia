@@ -142,7 +142,7 @@ impl HostScanSetting {
             hop_limit: 64,
             timeout_ms: 1000,
             count: 1,
-            payload: Some("np:neigh".to_string()),
+            payload: Some("netd".to_string()),
             ordered: true,
             concurrency: Some(100),
         }

@@ -1,7 +1,7 @@
 import { ref } from "vue";
 
-const LS_PUBLIC_IP_VISIBLE = "np:privacy:public_ip_visible";
-const LS_HOSTNAME_VISIBLE = "np:privacy:hostname_visible";
+const LS_PUBLIC_IP_VISIBLE = "nd:privacy:public_ip_visible";
+const LS_HOSTNAME_VISIBLE = "nd:privacy:hostname_visible";
 const MASK_STR = "**hidden**";
 
 // Persistent visibility flag

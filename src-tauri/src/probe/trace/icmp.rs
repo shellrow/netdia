@@ -54,7 +54,7 @@ pub async fn icmp_traceroute(
     let timeout = Duration::from_millis(setting.timeout_ms);
     // TODO: echo_id should be randomized per run
     let echo_id: u16 = 0x1234;
-    let payload = b"np:trace-icmp";
+    let payload = b"netd";
 
     // Whether reached the destination at any hop
     let mut reached = false;

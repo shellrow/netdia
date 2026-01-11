@@ -4,7 +4,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { AppConfig } from "../types/config";
 import { useTheme } from "../composables/useTheme";
-import { normalizeBpsUnit, readBpsUnit, LOCAL_SETTINGS } from "../utils/preferences";
+import { normalizeBpsUnit, readBpsUnit } from "../utils/preferences";
+import { INTERNET_CHECK_INTERVAL } from "../constants/defaults";
+import { STORAGE_KEYS } from "../constants/storage";
+import { clampInt } from "../utils/numeric";
 
 const { themeMode, setSystemTheme, setLightTheme, setDarkTheme } = useTheme();
 
@@ -29,8 +32,6 @@ const itemClass = (active: boolean) => `${baseItem} ${active ? activeColor : idl
 const cfg = ref<AppConfig | null>(null);
 const loading = ref(false);
 const saving  = ref(false);
-
-const autostart   = ref(localStorage.getItem(LOCAL_SETTINGS.autostart) === "1");
 const theme = computed<"system" | "light" | "dark">({
   get: () => themeMode.value,
   set: (v) => {
@@ -39,25 +40,56 @@ const theme = computed<"system" | "light" | "dark">({
     else setDarkTheme();
   },
 });
-const refreshMs   = ref<number>(parseInt(localStorage.getItem(LOCAL_SETTINGS.refresh) || "1000", 10));
+const refreshMs   = ref<number>(parseInt(localStorage.getItem(STORAGE_KEYS.REFRESH_INTERVAL_MS) || "1000", 10));
 const bpsUnit     = ref<"bytes"|"bits">(readBpsUnit(localStorage));
 
-type LogsPath = { folder: string; file?: string | null };
+// --- Internet check settings ---
+function readAutoInternetCheck(): boolean {
+  const v = localStorage.getItem(STORAGE_KEYS.AUTO_INTERNET_CHECK);
+  if (v == null) return true;
+  return v === "1" || v.toLowerCase() === "true";
+}
 
-const opening = ref(false);
+function readAutoInternetCheckIntervalS(): number {
+  const raw = localStorage.getItem(STORAGE_KEYS.AUTO_INTERNET_CHECK_INTERVAL_S);
+  if (raw == null || raw.trim() === "") return INTERNET_CHECK_INTERVAL.DEFAULT;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return INTERNET_CHECK_INTERVAL.DEFAULT;
+  return clampInt(Math.floor(n), INTERNET_CHECK_INTERVAL.MIN, INTERNET_CHECK_INTERVAL.MAX);
+}
 
-watch(autostart,   v => localStorage.setItem(LOCAL_SETTINGS.autostart, v ? "1" : "0"));
-watch(theme,       v => localStorage.setItem(LOCAL_SETTINGS.theme,     v));
-watch(refreshMs,   v => localStorage.setItem(LOCAL_SETTINGS.refresh,   String(v)));
-watch(bpsUnit,     v => localStorage.setItem(LOCAL_SETTINGS.bpsUnit,   v));
+const autoInternetCheck = ref<boolean>(readAutoInternetCheck());
+const autoInternetCheckIntervalS = ref<number>(readAutoInternetCheckIntervalS());
 
-const fmtMs = (v:number) => `${v} ms`;
+watch(theme,     v => localStorage.setItem(STORAGE_KEYS.THEME,     v));
+watch(refreshMs, v => localStorage.setItem(STORAGE_KEYS.REFRESH_INTERVAL_MS,   String(v)));
+watch(bpsUnit,   v => localStorage.setItem(STORAGE_KEYS.BPS_UNIT,   v));
+
+watch(autoInternetCheck, v => localStorage.setItem(STORAGE_KEYS.AUTO_INTERNET_CHECK, v ? "1" : "0"));
+watch(autoInternetCheckIntervalS, (v) => {
+  const n = Number(v);
+  const next = Number.isFinite(n)
+    ? clampInt(Math.floor(n), INTERNET_CHECK_INTERVAL.MIN, INTERNET_CHECK_INTERVAL.MAX)
+    : INTERNET_CHECK_INTERVAL.DEFAULT;
+
+  if (next !== autoInternetCheckIntervalS.value) {
+    autoInternetCheckIntervalS.value = next;
+    return;
+  }
+
+  localStorage.setItem(
+    STORAGE_KEYS.AUTO_INTERNET_CHECK_INTERVAL_S,
+    String(next),
+  );
+});
 
 function applyFromConfig(c: AppConfig) {
-  autostart.value = c.startup;
   theme.value     = c.theme;
   refreshMs.value = c.refresh_interval_ms;
   bpsUnit.value   = normalizeBpsUnit(c.data_unit);
+
+  autoInternetCheck.value = !!c.auto_internet_check;
+  autoInternetCheckIntervalS.value = clampInt(Math.floor(c.auto_internet_check_interval_s ?? INTERNET_CHECK_INTERVAL.DEFAULT), INTERNET_CHECK_INTERVAL.MIN, INTERNET_CHECK_INTERVAL.MAX);
 }
 
 async function loadConfig() {
@@ -74,7 +106,7 @@ async function loadConfig() {
 let saveTimer: number | null = null;
 function scheduleSave() {
   if (saveTimer) window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(saveConfig, 350); // debounce 350ms
+  saveTimer = window.setTimeout(saveConfig, 350);
 }
 
 async function saveConfig() {
@@ -83,11 +115,13 @@ async function saveConfig() {
   try {
     const next: AppConfig = {
       ...cfg.value,
-      startup: autostart.value,
+      startup: false,
       theme: theme.value,
       refresh_interval_ms: refreshMs.value,
       data_unit: bpsUnit.value,
       logging: cfg.value.logging,
+      auto_internet_check: autoInternetCheck.value,
+      auto_internet_check_interval_s: clampInt(Math.floor(autoInternetCheckIntervalS.value), INTERNET_CHECK_INTERVAL.MIN, INTERNET_CHECK_INTERVAL.MAX),
     };
     await invoke("save_config", { cfg: next });
     cfg.value = next;
@@ -96,11 +130,13 @@ async function saveConfig() {
   }
 }
 
+type LogsPath = { folder: string; file?: string | null };
+const opening = ref(false);
+
 async function openLogsFolder() {
   try {
     opening.value = true;
     const paths = await invoke<LogsPath>("logs_dir_path");
-    // Try to reveal the log file in the folder
     if (paths.file) {
       try {
         await revealItemInDir(paths.file);
@@ -109,7 +145,6 @@ async function openLogsFolder() {
         console.warn("revealItemInDir failed, fallback to openPath", err);
       }
     }
-    // Fallback: just open the folder
     await openPath(paths.folder);
   } catch (e: any) {
     alert(`Failed to open logs folder:\n${e?.toString?.() ?? e}`);
@@ -118,11 +153,9 @@ async function openLogsFolder() {
   }
 }
 
-// Watchers to auto-save on change
-watch([autostart, theme, refreshMs, bpsUnit], scheduleSave, { deep: false });
+watch([theme, refreshMs, bpsUnit, autoInternetCheck, autoInternetCheckIntervalS], scheduleSave, { deep: false });
 
 onMounted(loadConfig);
-
 </script>
 
 <template>
@@ -152,19 +185,6 @@ onMounted(loadConfig);
         <!-- General -->
         <div v-if="current === 'general'" class="flex flex-col gap-4">
           <Card>
-            <template #title>Startup & Behavior</template>
-            <template #content>
-              <div class="flex items-center justify-between py-2">
-                <div>
-                  <div class="font-medium">Launch NetDia on system startup</div>
-                  <div class="text-sm text-surface-500">Automatically start the app after login (coming soon).</div>
-                </div>
-                <ToggleSwitch v-model="autostart" disabled />
-              </div>
-            </template>
-          </Card>
-
-          <Card>
             <template #title>Refresh interval</template>
             <template #content>
               <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto] items-center gap-3">
@@ -174,7 +194,44 @@ onMounted(loadConfig);
                 </div>
                 <div class="flex items-center gap-2">
                   <InputNumber v-model="refreshMs" :min="1000" :max="10000" :step="100" showButtons inputClass="w-28" />
-                  <span class="text-sm text-surface-500">{{ fmtMs(refreshMs) }}</span>
+                  <span class="text-sm text-surface-500">ms</span>
+                </div>
+              </div>
+            </template>
+          </Card>
+          <Card>
+            <template #title>Internet connectivity check</template>
+            <template #content>
+              <div class="flex flex-col gap-4">
+                <div class="flex items-center justify-between py-1">
+                  <div>
+                    <div class="font-medium">Auto Internet Check</div>
+                    <div class="text-sm text-surface-500">
+                      Periodically fetch public IP info to estimate reachability.
+                    </div>
+                  </div>
+                  <ToggleSwitch v-model="autoInternetCheck" />
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto] items-center gap-3">
+                  <div>
+                    <div class="font-medium">Interval</div>
+                    <div class="text-sm text-surface-500">
+                      Range: {{ INTERNET_CHECK_INTERVAL.MIN }} - {{ INTERNET_CHECK_INTERVAL.MAX }} seconds.
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <InputNumber
+                      v-model="autoInternetCheckIntervalS"
+                      :min="INTERNET_CHECK_INTERVAL.MIN"
+                      :max="INTERNET_CHECK_INTERVAL.MAX"
+                      :step="10"
+                      showButtons
+                      inputClass="w-28"
+                      :disabled="!autoInternetCheck"
+                    />
+                    <span class="text-sm text-surface-500">s</span>
+                  </div>
                 </div>
               </div>
             </template>
