@@ -12,7 +12,7 @@ const form = reactive({
   hop_limit: 64,
   timeout_ms: 1000,
   count: 1,
-  payload: "np:hs",
+  payload: "netd",
   ordered: false,
   concurrency: 100,
 });
