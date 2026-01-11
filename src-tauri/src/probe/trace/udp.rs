@@ -88,7 +88,7 @@ pub async fn udp_traceroute(
                 .wrapping_add(ttl as u16)
                 .wrapping_add(t as u16);
             let target = SocketAddr::new(dst_ip, dst_port);
-            let payload = Bytes::from_static(b"np:trace-udp");
+            let payload = Bytes::from_static(b"netd");
 
             let sent_at = Instant::now();
 

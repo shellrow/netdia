@@ -64,7 +64,7 @@ pub async fn host_scan(
     let payload = setting
         .payload
         .clone()
-        .unwrap_or_else(|| "np:hs".to_string());
+        .unwrap_or_else(|| "netd".to_string());
     let concurrency = setting.concurrency.unwrap_or(hosts_concurrency());
     if !setting.ordered {
         setting.targets.shuffle(&mut thread_rng());
