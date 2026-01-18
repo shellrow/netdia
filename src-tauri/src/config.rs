@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::log::DEFAULT_LOG_FILE_NAME;
 
 pub const DEFAULT_CONFIG_FILE_NAME: &str = "netdia-config.json";
+const DEFAULT_THEME: &str = "dark";
 
 pub mod bps_unit {
     pub const BITS: &str = "bits";
@@ -43,7 +44,7 @@ impl AppConfig {
             startup: false,
             background: false,
             refresh_interval_ms: 1000,
-            theme: "system".to_string(),
+            theme: DEFAULT_THEME.to_string(),
             data_unit: bps_unit::BITS.to_string(),
             logging: LoggingConfig::new(),
             auto_internet_check: true,
