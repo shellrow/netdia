@@ -8,6 +8,7 @@ import { definePreset } from '@primeuix/themes';
 import './style.css';
 import 'primeicons/primeicons.css';
 import type { AppConfig } from "./types/config";
+import { STORAGE_KEYS } from "./constants/storage";
 
 // Components
 import StyleClass from 'primevue/styleclass';
@@ -43,7 +44,7 @@ import CheckboxGroup from 'primevue/checkboxgroup';
 import Textarea from 'primevue/textarea';
 import Chart from 'primevue/chart';
 import Timeline from 'primevue/timeline';
-import { STORAGE_KEYS } from "./constants/storage";
+import SelectButton from 'primevue/selectbutton';
 
 const ThemePreset = definePreset(Aura, {
     semantic: {
@@ -144,6 +145,7 @@ app.component('CheckboxGroup', CheckboxGroup);
 app.component('Textarea', Textarea);
 app.component('Chart', Chart);
 app.component('Timeline', Timeline);
+app.component('SelectButton', SelectButton);
 
 app.directive('tooltip', Tooltip);
 app.directive('styleclass', StyleClass);

@@ -6,6 +6,7 @@ pub mod interface;
 pub mod ping;
 pub mod probe;
 pub mod scan;
+pub mod speedtest;
 
 use serde::{Deserialize, Serialize};
 

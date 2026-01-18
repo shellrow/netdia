@@ -201,6 +201,9 @@ pub fn run() {
             command::scan::neighbor_scan,
             command::trace::traceroute,
             command::scan::init_probe_db,
+            command::latency::measure_latency,
+            command::speedtest::start_speedtest,
+            command::speedtest::stop_speedtest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running netdia application");
