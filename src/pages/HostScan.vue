@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { HostScanProgress, HostScanReport, HostScanRequest } from "../types/probe";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
+import { fmtMs } from "../utils/formatter";
 
 const form = reactive({
   mode: "cidr" as "cidr" | "list",
@@ -83,10 +84,6 @@ function resetResult() {
   aliveRows.value = [];
   report.value = null;
   err.value = null;
-}
-
-function fmtMs(v?: number | null) {
-  return v == null ? "-" : `${v} ms`;
 }
 
 const targetCount = computed(() =>

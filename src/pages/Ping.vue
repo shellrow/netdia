@@ -5,6 +5,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { PingProtocol, PingSample, PingStat, PingSetting } from "../types/probe";
 import { Host } from "../types/net";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
+import { fmtMs } from "../utils/formatter";
 
 const form = reactive({
   protocol: "Icmp" as PingProtocol,
@@ -119,11 +120,6 @@ const lossRate = computed(() => {
   if (sentCount.value === 0) return 0;
   return Math.max(0, Math.round((1 - recvCount.value / sentCount.value) * 100));
 });
-
-function fmtMs(v?: number | null) {
-  if (v == null) return "-";
-  return `${v} ms`;
-}
 </script>
 
 <template>

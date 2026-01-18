@@ -12,6 +12,7 @@ import {
 } from "../types/probe";
 import { Host } from "../types/net";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
+import { fmtMs } from "../utils/formatter";
 
 const form = reactive({
   protocol: "Tcp" as PortScanProtocol,
@@ -181,11 +182,6 @@ const progressPct = computed(() => {
 });
 
 const openCount = computed(() => openOnly.value.length);
-
-function fmtMs(v?: number | null) {
-  if (v == null) return "-";
-  return `${v} ms`;
-}
 
 let unlistenStart: UnlistenFn | null = null;
 let unlistenProgress: UnlistenFn | null = null;
