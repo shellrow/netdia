@@ -8,6 +8,8 @@ pub mod scan;
 pub mod socket;
 pub mod system;
 pub mod trace;
+pub mod speedtest;
+pub mod latency;
 
 use crate::model::AppInfo;
 

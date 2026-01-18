@@ -31,6 +31,10 @@ pub struct AppState {
     pub last_refresh: Mutex<SystemTime>,
     /// Update task handle
     pub task: Mutex<Option<JoinHandle<()>>>,
+    /// Speedtest task handle
+    pub speedtest_task: Mutex<Option<JoinHandle<()>>>,
+    /// Last speedtest result: (direction, bytes)
+    pub speedtest_last: Mutex<Option<(crate::model::speedtest::SpeedtestDirection, u64)>>, // direction, bytes
 }
 
 impl Default for AppState {
@@ -40,6 +44,8 @@ impl Default for AppState {
             stats: Mutex::new(HashMap::new()),
             last_refresh: Mutex::new(SystemTime::now()),
             task: Mutex::new(None),
+            speedtest_task: Mutex::new(None),
+            speedtest_last: Mutex::new(None),
         }
     }
 }

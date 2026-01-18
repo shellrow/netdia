@@ -17,6 +17,11 @@ export function fmtDate(ts: unknown): string {
   return isNaN(+d) ? "-" : d.toLocaleString();
 }
 
+export function fmtMs(v?: number | null): string {
+  if (v == null) return "-";
+  return `${v} ms`;
+}
+
 export function hexFlags(flags?: number) {
   if (flags == null) return "0x0";
   return "0x" + flags.toString(16).toUpperCase();

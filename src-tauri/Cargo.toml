@@ -36,8 +36,9 @@ netdev = { version = "0.40", features = ["serde"] }
 netroute = { version = "0.3", features = ["serde"] }
 netsock = { version = "0.5", features = ["serde"] }
 futures = {version = "0.3", features = ["executor", "thread-pool"] }
+futures-util = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots", "http2", "system-proxy" ] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots", "http2", "system-proxy", "stream" ] }
 hostname = { version = "0.4" }
 os_info = { version = "3.12" }
 ndb-oui = { version = "0.4", features = ["bundled"] }

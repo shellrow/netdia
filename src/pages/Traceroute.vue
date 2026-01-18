@@ -19,6 +19,7 @@ import type {
 import type { Host } from "../types/net";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
 import type { ChartData, ChartOptions } from "chart.js";
+import { fmtMs } from "../utils/formatter";
 
 const form = reactive({
   protocol: "Icmp" as TraceProtocol,
@@ -209,11 +210,6 @@ const lastHop = computed(() => {
   }
   return hops.value[hops.value.length - 1];
 });
-
-function fmtMs(v?: number | null) {
-  if (v == null) return "-";
-  return `${v} ms`;
-}
 
 function fmtIp(ip?: string | null) {
   if (!ip) return "*";

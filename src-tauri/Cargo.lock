@@ -2630,6 +2630,7 @@ dependencies = [
  "data-encoding",
  "fastrand",
  "futures",
+ "futures-util",
  "h3",
  "h3-quinn",
  "hickory-proto",
