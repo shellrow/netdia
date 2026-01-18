@@ -874,7 +874,7 @@ onBeforeUnmount(() => {
                   :value="pathNodes"
                   layout="horizontal"
                   align="top"
-                  class="nd-path-timeline"
+                  class="nd-path-timeline gap-1"
                 >
                   <template #marker="{ item }">
                     <span class="nd-marker" :style="{ backgroundColor: item.color }">
