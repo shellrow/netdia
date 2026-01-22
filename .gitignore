@@ -32,3 +32,4 @@ signed/
 
 # Other artifacts
 build/
+latest.json
