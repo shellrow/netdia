@@ -10,6 +10,7 @@ pub mod system;
 pub mod trace;
 pub mod speedtest;
 pub mod latency;
+pub mod updater;
 
 use crate::model::AppInfo;
 
