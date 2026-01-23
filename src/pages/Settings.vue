@@ -347,7 +347,7 @@ onMounted(async () => {
               <div
                 v-if="updater.state.value === 'available' && updater.info.value"
                 class="rounded-lg border border-surface-200 dark:border-surface-700
-                      bg-surface-50 dark:bg-surface-900 p-3 text-sm"
+                      bg-surface-50 dark:bg-surface-900 p-3 text-sm mt-2"
               >
                 <div class="flex flex-col gap-1">
                   <div class="font-medium text-surface-800 dark:text-surface-100">
