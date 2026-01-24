@@ -3,7 +3,7 @@ import { ref, onMounted, onBeforeUnmount, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { IpInfo, IpInfoDual } from "../types/internet";
-import { nv } from "../utils/formatter";
+import { fmtBytes, nv } from "../utils/formatter";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
 import { usePrivacyGate } from "../composables/usePrivacyGate";
 
@@ -73,9 +73,9 @@ const progressPct = computed(() => {
   return Math.min(100, Math.max(0, Math.round(pct * 10) / 10));
 });
 
-const transferredText = computed(() => formatBytes(stTransferred.value));
-const targetText = computed(() => formatBytes(stTarget.value || selectedSize.value.bytes));
-const elapsedText = computed(() => formatDuration(stElapsedMs.value));
+const transferredText = computed(() => fmtBytes(stTransferred.value));
+const targetText = computed(() => fmtBytes(stTarget.value || selectedSize.value.bytes));
+const elapsedText = computed(() => fmtDuration(stElapsedMs.value));
 
 const maxDurationMs = 30_000;
 
@@ -241,19 +241,7 @@ onBeforeUnmount(async () => {
   if (unlistenLatencyDone) await unlistenLatencyDone();
 });
 
-// Helpers
-function formatBytes(n: number): string {
-  const u = ["B", "KB", "MB", "GB"];
-  let v = n;
-  let i = 0;
-  while (v >= 1024 && i < u.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(i === 0 ? 0 : 2)} ${u[i]}`;
-}
-
-function formatDuration(ms: number): string {
+function fmtDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60);
   const ss = s % 60;
