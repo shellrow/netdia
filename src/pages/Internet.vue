@@ -130,6 +130,7 @@ async function stopSpeedtest() {
   stStarting.value = false;
   stRunning.value = false;
   latencyRunning.value = false;
+  stInstantMbps.value = 0;
 
   await invoke("stop_speedtest");
 }
@@ -232,6 +233,7 @@ onMounted(async () => {
 
     stDoneResult.value = (p.result ?? "error") as Result;
     stMessage.value = p.message ?? null;
+    stInstantMbps.value = 0;
   });
 });
 
