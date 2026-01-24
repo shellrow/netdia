@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, onMounted } from "vue";
 import { RouteRecordName, useRoute } from "vue-router";
 import { useTheme } from "../composables/useTheme";
 import { getName as getAppName, getVersion as getAppVersion } from "@tauri-apps/api/app";
 import { STORAGE_KEYS } from "../constants/storage";
 
-const innerWidth = ref(window.innerWidth);
-const innerHeight = ref(window.innerHeight);
 const { currentLogoFile } = useTheme();
 const stored = localStorage.getItem(STORAGE_KEYS.SIDEBAR_COMPACT);
 const isCompact = ref(stored != null ? stored === "1" : true);
@@ -26,14 +24,6 @@ const activeColor =
 function itemClass(active: boolean) {
   return `${baseItem} ${active ? activeColor : idleColor}`;
 }
-
-const checkWindowSize = () => {
-  innerWidth.value = window.innerWidth;
-  innerHeight.value = window.innerHeight;
-};
-
-onMounted(() => window.addEventListener("resize", checkWindowSize));
-onUnmounted(() => window.removeEventListener("resize", checkWindowSize));
 
 type Item = {
   name: string;    
