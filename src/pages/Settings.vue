@@ -10,6 +10,7 @@ import { INTERNET_CHECK_INTERVAL } from "../constants/defaults";
 import { STORAGE_KEYS } from "../constants/storage";
 import { clampInt } from "../utils/numeric";
 import { useUpdater } from "../composables/useUpdater";
+import { formatBytes } from "../types/net";
 
 const { themeMode, setSystemTheme, setLightTheme, setDarkTheme } = useTheme();
 const updater = useUpdater();
@@ -392,7 +393,7 @@ onMounted(async () => {
                 <div v-if="updater.state.value === 'downloading'" class="flex flex-col gap-2">
                   <ProgressBar :value="updater.uiProgressPercent.value" />
                   <div class="text-xs text-surface-500">
-                    {{ updater.uiProgressPercent.value }} %
+                    {{ formatBytes(updater.downloaded.value) }} / {{ formatBytes(updater.total.value ?? 0) }}
                   </div>
                 </div>
 
