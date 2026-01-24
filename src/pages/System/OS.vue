@@ -12,7 +12,7 @@ onMounted(fetchSys);
 
 function nv(v?: string | null) { return v && v.trim() ? v : "-"; }
 
-const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
+const { panelHeight } = useScrollPanelHeight();
 const { hostnameVisible, toggleHostname, hostnameGate } = usePrivacyGate();
 </script>
 
