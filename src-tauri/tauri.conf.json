@@ -32,6 +32,15 @@
       "icons/icon.ico"
     ],
     "publisher": "Foctal",
-    "shortDescription": "Cross-platform network diagnostic suite"
+    "shortDescription": "Cross-platform network diagnostic suite",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlBQjIxODEzMDE0MjAxNTIKUldSU0FVSUJFeGl5bW5ESGZidnZ4cEZCTnp3bGd2RWZaMzFQNzdwbFgybkxsV1pvTzc4dmkvT0oK",
+      "endpoints": [
+        "https://github.com/shellrow/netdia/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

@@ -9,7 +9,7 @@ use tauri::{
 use tauri_plugin_autostart::{init as autostart_init, MacosLauncher, ManagerExt};
 
 use crate::{
-    command::{self, config::ConfigState},
+    command::{self, config::ConfigState, updater::PendingUpdate},
     service,
     state::AppState,
 };
@@ -53,9 +53,11 @@ pub fn run() {
     tauri::Builder::default()
         // Plugins
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Register AppState as Tauri State
         .manage(conf_state)
         .manage(shared_app_state.clone())
+        .manage(PendingUpdate::default())
         // Setup: spawn background task
         .setup(move |app| {
             // Spawn background supervisor task
@@ -204,6 +206,8 @@ pub fn run() {
             command::latency::measure_latency,
             command::speedtest::start_speedtest,
             command::speedtest::stop_speedtest,
+            command::updater::check_update,
+            command::updater::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running netdia application");

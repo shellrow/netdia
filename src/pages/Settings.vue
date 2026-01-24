@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion as getAppVersion } from "@tauri-apps/api/app";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { AppConfig } from "../types/config";
 import { useTheme } from "../composables/useTheme";
@@ -8,8 +9,11 @@ import { normalizeBpsUnit, readBpsUnit } from "../utils/preferences";
 import { INTERNET_CHECK_INTERVAL } from "../constants/defaults";
 import { STORAGE_KEYS } from "../constants/storage";
 import { clampInt } from "../utils/numeric";
+import { useUpdater } from "../composables/useUpdater";
+import { formatBytes } from "../types/net";
 
 const { themeMode, setSystemTheme, setLightTheme, setDarkTheme } = useTheme();
+const updater = useUpdater();
 
 type SectionKey = "general" | "appearance" | "app";
 type Section = { key: SectionKey; label: string; icon: string; desc?: string };
@@ -155,8 +159,38 @@ async function openLogsFolder() {
 
 watch([theme, refreshMs, bpsUnit, autoInternetCheck, autoInternetCheckIntervalS], scheduleSave, { deep: false });
 
-onMounted(loadConfig);
+// Updater
+const appVersion = ref<string>("");
+const currentVersionText = computed(() => updater.info.value?.current_version ?? appVersion.value);
+
+const pubDateText = computed(() => {
+  const s = updater.info.value?.pub_date;
+  if (!s) return null;
+  return s.split("T")[0] ?? s;
+});
+
+function openStore() {
+  const url = updater.info.value?.store_url;
+  if (url) {
+    openPath(url);
+  }
+}
+
+onMounted(async () => {
+  try {
+    loadConfig();
+    appVersion.value = await getAppVersion();
+  } catch {
+    // ignore
+  }
+});
 </script>
+
+<style scoped>
+:deep(.p-progressbar .p-progressbar-value) {
+  transition: none !important;
+}
+</style>
 
 <template>
   <div class="p-4 h-full min-h-0 flex flex-col gap-4">
@@ -279,12 +313,106 @@ onMounted(loadConfig);
           <Card>
             <template #title>Updates</template>
             <template #content>
-              <div class="flex items-center justify-between py-1">
-                <div>
-                  <div class="font-medium">Check for updates</div>
-                  <div class="text-sm text-surface-500">Manual update check (coming soon).</div>
+              <div class="flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="font-medium">Application update</div>
+                    <div class="text-sm text-surface-500">
+                      Current version: {{ currentVersionText }}
+                    </div>
+                  </div>
+
+                  <Button
+                    label="Check now"
+                    icon="pi pi-refresh"
+                    outlined
+                    :loading="updater.isChecking.value"
+                    :disabled="updater.isDownloading.value"
+                    @click="updater.check"
+                  />
                 </div>
-                <Button label="Check now" icon="pi pi-refresh" outlined disabled />
+
+                <!-- Status -->
+                <Tag v-if="updater.state.value === 'checking'" severity="secondary" value="Checking for updates..." />
+                <Tag v-else-if="updater.state.value === 'store'" severity="info" value="Updates are managed via Microsoft Store" />
+                <Tag v-else-if="updater.state.value === 'available'" severity="info" value="Update available" />
+                <Tag v-else-if="updater.state.value === 'downloading'" severity="info" value="Downloading update..." />
+                <Tag v-else-if="updater.state.value === 'ready'" severity="warning" value="Restart required" />
+                <Tag v-else-if="updater.state.value === 'idle'" severity="success" value="Up to date" />
+                <Tag v-else-if="updater.state.value === 'error'" severity="danger" value="Update error" />
+                <div
+                  v-if="updater.state.value === 'error' && updater.error.value"
+                  class="text-sm text-red-500"
+                >
+                  {{ updater.error.value }}
+                </div>
+
+                
+
+              </div>
+              <!-- Update details -->
+              <div
+                v-if="updater.state.value === 'available' && updater.info.value"
+                class="rounded-lg border border-surface-200 dark:border-surface-700
+                      bg-surface-50 dark:bg-surface-900 p-3 text-sm mt-2"
+              >
+                <div class="flex flex-col gap-1">
+                  <div class="font-medium text-surface-800 dark:text-surface-100">
+                    Version {{ updater.info.value.version ?? "-" }}
+                  </div>
+
+                  <div
+                    v-if="pubDateText"
+                    class="text-xs text-surface-500"
+                  >
+                    Released: {{ pubDateText }}
+                  </div>
+
+                  <div
+                    v-if="updater.info.value.notes"
+                    class="mt-2 whitespace-pre-wrap text-surface-600 dark:text-surface-300"
+                  >
+                    {{ updater.info.value.notes }}
+                  </div>
+                </div>
+              </div>
+              <!-- Actions -->
+              <div class="flex flex-col gap-3 mt-2">
+
+                <!-- Install -->
+                <Button
+                  v-if="updater.state.value === 'available'"
+                  label="Download & Install"
+                  icon="pi pi-download"
+                  severity="primary"
+                  :disabled="updater.isDownloading.value"
+                  @click="updater.downloadAndInstall"
+                />
+
+                <!-- Downloading -->
+                <div v-if="updater.state.value === 'downloading'" class="flex flex-col gap-2">
+                  <ProgressBar :value="updater.uiProgressPercent.value" />
+                  <div class="text-xs text-surface-500">
+                    {{ formatBytes(updater.downloaded.value) }} / {{ formatBytes(updater.total.value ?? 0) }}
+                  </div>
+                </div>
+
+                <!-- Restart -->
+                <div
+                  v-if="updater.state.value === 'ready'"
+                  class="text-sm text-surface-600 dark:text-surface-300"
+                >
+                  Please restart NetDia to apply the update.
+                </div>
+
+                <!-- Microsoft Store -->
+                <Button
+                  v-if="updater.state.value === 'store'"
+                  label="Open Microsoft Store"
+                  icon="pi pi-external-link"
+                  outlined
+                  @click="openStore"
+                />
               </div>
             </template>
           </Card>
