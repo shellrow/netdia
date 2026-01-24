@@ -36,30 +36,27 @@ export function useUpdater() {
   const state = ref<UpdateState>("idle");
   const info = ref<UpdateInfo | null>(null);
 
-  const progress = ref(0); // 0..100
   const downloaded = ref(0);
   const total = ref<number | null>(null);
   const error = ref<string | null>(null);
 
-  // ---- computed ----
   const isChecking = computed(() => state.value === "checking");
   const isDownloading = computed(() => state.value === "downloading");
   const hasUpdate = computed(() => state.value === "available");
-
   const storeUrl = computed(() => info.value?.store_url ?? null);
 
-  const progressPercent = computed(() => {
-    if (!total.value || total.value === 0) return 0;
-    return Math.min(100, (downloaded.value / total.value) * 100);
+  const uiProgressPercent = computed(() => {
+    const t = total.value ?? 0;
+    if (t <= 0) return 0;
+    const pct = (downloaded.value / t) * 100;
+    return Math.max(0, Math.min(100, Math.floor(pct)));
   });
 
-  // ---- actions ----
   async function check() {
     state.value = "checking";
-    await Promise.resolve(); // allow state update
+    await Promise.resolve();
     error.value = null;
 
-    progress.value = 0;
     downloaded.value = 0;
     total.value = null;
 
@@ -81,40 +78,30 @@ export function useUpdater() {
 
     state.value = "downloading";
     error.value = null;
-    progress.value = 0;
+
     downloaded.value = 0;
     total.value = null;
 
     const channel = new Channel<DownloadEvent>();
-
     channel.onmessage = (e) => {
       switch (e.event) {
         case "Started": {
           total.value = e.data.content_length ?? null;
+          downloaded.value = 0;
           break;
         }
-
         case "Progress": {
           downloaded.value = e.data.downloaded ?? 0;
-
           if (total.value == null && e.data.content_length != null) {
             total.value = e.data.content_length;
           }
-
-          if (total.value && total.value > 0) {
-            progress.value = Math.min(100, (downloaded.value / total.value) * 100);
-          } else {
-            progress.value = 0;
-          }
           break;
         }
-
         case "Finished": {
-          progress.value = 100;
+          downloaded.value = total.value ?? downloaded.value;
           state.value = "ready";
           break;
         }
-
         case "Error": {
           error.value = e.data.message ?? "Update failed";
           state.value = "error";
@@ -132,20 +119,16 @@ export function useUpdater() {
   }
 
   return {
-    // state
     state,
     info,
-    progress,
     downloaded,
     total,
     error,
-    // computed
     isChecking,
     isDownloading,
     hasUpdate,
     storeUrl,
-    progressPercent,
-    // actions
+    uiProgressPercent,
     check,
     downloadAndInstall,
   };

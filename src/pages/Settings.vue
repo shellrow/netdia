@@ -185,6 +185,12 @@ onMounted(async () => {
 });
 </script>
 
+<style scoped>
+:deep(.p-progressbar .p-progressbar-value) {
+  transition: none !important;
+}
+</style>
+
 <template>
   <div class="p-4 h-full min-h-0 flex flex-col gap-4">
     <div class="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[150px_1fr] gap-4">
@@ -384,9 +390,9 @@ onMounted(async () => {
 
                 <!-- Downloading -->
                 <div v-if="updater.state.value === 'downloading'" class="flex flex-col gap-2">
-                  <ProgressBar :value="updater.progressPercent.value" />
+                  <ProgressBar :value="updater.uiProgressPercent.value" />
                   <div class="text-xs text-surface-500">
-                    {{ Math.floor(updater.progressPercent.value) }} %
+                    {{ updater.uiProgressPercent.value }} %
                   </div>
                 </div>
 
