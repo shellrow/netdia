@@ -3,9 +3,8 @@ import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { NetworkInterface } from "../types/net";
-import { formatBps, formatBytesPerSec, formatBytes } from "../types/net";
 import type { SysInfo } from "../types/system";
-import { fmtIfType, severityByOper } from "../utils/formatter";
+import { fmtIfType, severityByOper, fmtBps, fmtBytesPerSec, fmtBytes } from "../utils/formatter";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
 import { usePrivacyGate } from "../composables/usePrivacyGate";
 import type { ChartData, ChartOptions } from "chart.js";
@@ -37,9 +36,9 @@ const rxLabel = computed(() =>
 const txLabel = computed(() =>
   bpsUnit.value === "bits" ? "TX bps" : "TX B/s",
 );
-function formatThroughput(v?: number): string {
+function fmtThroughput(v?: number): string {
   const n = v ?? 0;
-  return bpsUnit.value === "bits" ? formatBps(n * 8) : formatBytesPerSec(n);
+  return bpsUnit.value === "bits" ? fmtBps(n * 8) : fmtBytesPerSec(n);
 }
 
 function maskIpLabel(
@@ -72,7 +71,7 @@ const surfaceBorder = documentStyle.getPropertyValue('--p-content-border-color')
 const rxBorder = documentStyle.getPropertyValue("--p-cyan-400").trim();
 const txBorder = documentStyle.getPropertyValue("--p-pink-400").trim();
 
-function formatAxisThroughput(value: number): string {
+function fmtAxisThroughput(value: number): string {
   const bytesPerSec = value ?? 0;
   const useBits = bpsUnit.value === "bits";
   const base = useBits ? bytesPerSec * 8 : bytesPerSec;
@@ -133,8 +132,8 @@ const trafficOptions = ref<ChartOptions<"line">>({
           const raw = ctx.parsed.y ?? 0;
           const v =
             bpsUnit.value === "bits"
-              ? formatBps(raw * 8)
-              : formatBytesPerSec(raw);
+              ? fmtBps(raw * 8)
+              : fmtBytesPerSec(raw);
           return `${dsLabel}: ${v}`;
         },
       },
@@ -161,7 +160,7 @@ const trafficOptions = ref<ChartOptions<"line">>({
       ticks: {
         callback(value) {
           const num = typeof value === "number" ? value : Number(value);
-          return formatAxisThroughput(Number.isFinite(num) ? num : 0);
+          return fmtAxisThroughput(Number.isFinite(num) ? num : 0);
         },
         color: textColorSecondary,
         font: { size: 10 },
@@ -280,9 +279,9 @@ function calcStatsFromDataset(index: number) {
 const rxStats = computed(() => calcStatsFromDataset(0));
 const txStats = computed(() => calcStatsFromDataset(1));
 
-function formatStat(v?: number) {
+function fmtStat(v?: number) {
   if (v == null || !Number.isFinite(v)) return "-";
-  return formatThroughput(v);
+  return fmtThroughput(v);
 }
 
 // Data Fetching
@@ -972,7 +971,7 @@ onBeforeUnmount(() => {
                           </div>
                           <div class="text-base font-semibold">
                             {{
-                              formatThroughput(
+                              fmtThroughput(
                                 defaultIface.stats?.rx_bytes_per_sec || 0,
                               )
                             }}
@@ -986,7 +985,7 @@ onBeforeUnmount(() => {
                           </div>
                           <div class="text-base font-semibold">
                             {{
-                              formatThroughput(
+                              fmtThroughput(
                                 defaultIface.stats?.tx_bytes_per_sec || 0,
                               )
                             }}
@@ -999,7 +998,7 @@ onBeforeUnmount(() => {
                             RX total bytes
                           </div>
                           <div class="font-mono">
-                            {{ formatBytes(defaultIface.stats?.rx_bytes || 0) }}
+                            {{ fmtBytes(defaultIface.stats?.rx_bytes || 0) }}
                           </div>
                         </div>
                         <div
@@ -1009,19 +1008,19 @@ onBeforeUnmount(() => {
                             TX total bytes
                           </div>
                           <div class="font-mono">
-                            {{ formatBytes(defaultIface.stats?.tx_bytes || 0) }}
+                            {{ fmtBytes(defaultIface.stats?.tx_bytes || 0) }}
                           </div>
                         </div>
                       </div>
                       <div class="text-xs text-surface-500 mt-1">
                         Link Speed:
                         <span v-if="defaultIface.receive_speed">
-                          RX {{ formatBps(defaultIface.receive_speed) }}
+                          RX {{ fmtBps(defaultIface.receive_speed) }}
                         </span>
                         <span v-else>RX -</span>
                         /
                         <span v-if="defaultIface.transmit_speed">
-                          TX {{ formatBps(defaultIface.transmit_speed) }}
+                          TX {{ fmtBps(defaultIface.transmit_speed) }}
                         </span>
                         <span v-else>TX -</span>
                       </div>
@@ -1119,13 +1118,13 @@ onBeforeUnmount(() => {
                       <div>
                         <div class="text-surface-500 text-[11px]">AVG</div>
                         <div class="font-semibold text-sm">
-                          {{ formatStat(rxStats?.avg) }}
+                          {{ fmtStat(rxStats?.avg) }}
                         </div>
                       </div>
                       <div>
                         <div class="text-surface-500 text-[11px]">MAX</div>
                         <div class="font-semibold text-sm">
-                          {{ formatStat(rxStats?.max) }}
+                          {{ fmtStat(rxStats?.max) }}
                         </div>
                       </div>
                     </div>
@@ -1140,13 +1139,13 @@ onBeforeUnmount(() => {
                       <div>
                         <div class="text-surface-500 text-[11px]">AVG</div>
                         <div class="font-semibold text-sm">
-                          {{ formatStat(txStats?.avg) }}
+                          {{ fmtStat(txStats?.avg) }}
                         </div>
                       </div>
                       <div>
                         <div class="text-surface-500 text-[11px]">MAX</div>
                         <div class="font-semibold text-sm">
-                          {{ formatStat(txStats?.max) }}
+                          {{ fmtStat(txStats?.max) }}
                         </div>
                       </div>
                     </div>

@@ -3,9 +3,9 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { NetworkInterface } from "../types/net"; 
-import { ipListToString, formatBps, formatBytesPerSec, formatBytes } from "../types/net"; 
+import { ipListToString } from "../types/net"; 
 import { DataTableRowSelectEvent } from 'primevue/datatable';
-import { fmtIfType, hexFlags, severityByOper, shortenIpList} from "../utils/formatter";
+import { fmtIfType, hexFlags, severityByOper, shortenIpList, fmtBps, fmtBytesPerSec, fmtBytes } from "../utils/formatter";
 import { readBpsUnit, type UnitPref } from "../utils/preferences";
 
 const wrapRef = ref<HTMLElement|null>(null);
@@ -55,7 +55,7 @@ const txHeader = computed(() => (bpsUnit.value === "bits" ? "TX bps" : "TX B/s")
 
 function fmtThroughput(v?: number): string {
   const n = v ?? 0;
-  return bpsUnit.value === "bits" ? formatBps(n * 8) : formatBytesPerSec(n);
+  return bpsUnit.value === "bits" ? fmtBps(n * 8) : fmtBytesPerSec(n);
 }
 
 const loading = ref(false);
@@ -364,19 +364,19 @@ const filtered = computed(() => {
                 </div>
                 <div class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3">
                     <div class="text-surface-500 text-xs">RX total</div>
-                    <div class="font-mono">{{ formatBytes(selectedInterface?.stats?.rx_bytes || 0) }}</div>
+                    <div class="font-mono">{{ fmtBytes(selectedInterface?.stats?.rx_bytes || 0) }}</div>
                 </div>
                 <div class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3">
                     <div class="text-surface-500 text-xs">TX total</div>
-                    <div class="font-mono">{{ formatBytes(selectedInterface?.stats?.tx_bytes || 0) }}</div>
+                    <div class="font-mono">{{ fmtBytes(selectedInterface?.stats?.tx_bytes || 0) }}</div>
                 </div>
                 </div>
                 <div class="text-xs text-surface-500 mt-1">
                 Link Speed:
-                <span v-if="selectedInterface?.receive_speed">RX {{ formatBps(selectedInterface?.receive_speed) }}</span>
+                <span v-if="selectedInterface?.receive_speed">RX {{ fmtBps(selectedInterface?.receive_speed) }}</span>
                 <span v-else>RX -</span>
                 /
-                <span v-if="selectedInterface?.transmit_speed">TX {{ formatBps(selectedInterface?.transmit_speed) }}</span>
+                <span v-if="selectedInterface?.transmit_speed">TX {{ fmtBps(selectedInterface?.transmit_speed) }}</span>
                 <span v-else>TX -</span>
                 </div>
             </div>

@@ -72,37 +72,6 @@ export function ipListToString(xs?: (Ipv4Net | Ipv6Net)[]): string {
     .join(", ");
 }
 
-export function formatBps(v: number): string {
-  if (!isFinite(v) || v <= 0) return "0 bps";
-  const u = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"];
-  let i = 0;
-  let n = v;
-  while (n >= 1000 && i < u.length - 1) { n /= 1000; i++; }
-  return `${n.toFixed(n >= 100 ? 0 : n >= 10 ? 1 : 2)} ${u[i]}`;
-}
-
-export function formatBytesPerSec(v: number): string {
-  if (!isFinite(v) || v <= 0) return "0 B/s";
-  const units = ["B/s", "kB/s", "MB/s", "GB/s", "TB/s"];
-  let n = v;
-  let i = 0;
-  while (n >= 1000 && i < units.length - 1) {
-    n /= 1000;
-    i++;
-  }
-  const decimals = n >= 100 ? 0 : n >= 10 ? 1 : 2;
-  return `${n.toFixed(decimals)} ${units[i]}`;
-}
-
-export function formatBytes(v: number): string {
-  if (!isFinite(v) || v <= 0) return "0 B";
-  const u = ["B", "KB", "MB", "GB", "TB", "PB"];
-  let i = 0;
-  let n = v;
-  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-  return `${n.toFixed(n >= 100 ? 0 : n >= 10 ? 1 : 2)} ${u[i]}`;
-}
-
 export function toDate(ts: unknown): Date {
   if (ts == null) return new Date(NaN);
 

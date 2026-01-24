@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import type { SysInfo } from "../../types/system";
-import { useScrollPanelHeight } from "../../composables/useScrollPanelHeight";
-import { usePrivacyGate } from "../../composables/usePrivacyGate";
+import type { SysInfo } from "../types/system";
+import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
+import { usePrivacyGate } from "../composables/usePrivacyGate";
 
 const loading = ref(false);
 const sys = ref<SysInfo | null>(null);
@@ -12,7 +12,7 @@ onMounted(fetchSys);
 
 function nv(v?: string | null) { return v && v.trim() ? v : "-"; }
 
-const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
+const { panelHeight } = useScrollPanelHeight();
 const { hostnameVisible, toggleHostname, hostnameGate } = usePrivacyGate();
 </script>
 

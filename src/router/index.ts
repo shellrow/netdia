@@ -5,7 +5,7 @@ import Interfaces from '@/pages/Interfaces.vue';
 import Routes from '@/pages/Routes.vue';
 import Internet from '@/pages/Internet.vue';
 import Socket from '@/pages/Socket.vue';
-import OsInfo from '@/pages/System/OS.vue';
+import OsInfo from '@/pages/OS.vue';
 import Settings from '@/pages/Settings.vue';
 import DNS from '@/pages/DNS.vue';
 import Ping from '@/pages/Ping.vue';
@@ -26,12 +26,7 @@ const router = createRouter({
     { path: '/neighbor', name: 'neighbor', component: Neighbor },
     { path: '/internet', name: 'internet', component: Internet },
     { path: '/socket', name: 'socket', component: Socket },
-    {
-      path: '/system',
-      children: [
-        { path: 'os', name: 'system-os', component: OsInfo },
-      ],
-    },
+    { path: '/os', name: 'os', component: OsInfo },
     { path: '/dns', name: 'dns', component: DNS },
     { path: '/ping', name: 'ping', component: Ping },
     { path: '/traceroute', name: 'traceroute', component: Traceroute },

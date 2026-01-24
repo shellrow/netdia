@@ -3,8 +3,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { NetworkInterface } from "../types/net";
-import { formatBps, formatBytesPerSec } from "../types/net";
-import { severityByOper } from "../utils/formatter";
+import { severityByOper, fmtBps, fmtBytesPerSec } from "../utils/formatter";
 import type { ChartData, ChartOptions } from "chart.js";
 import { hexToRgba } from "../utils/color";
 import { readBpsUnit, type UnitPref } from "../utils/preferences";
@@ -23,9 +22,9 @@ function refreshUnitPref() {
   bpsUnit.value = readBpsUnit(localStorage);
 }
 
-function formatThroughput(v?: number): string {
+function fmtThroughput(v?: number): string {
   const n = v ?? 0;
-  return bpsUnit.value === "bits" ? formatBps(n * 8) : formatBytesPerSec(n);
+  return bpsUnit.value === "bits" ? fmtBps(n * 8) : fmtBytesPerSec(n);
 }
 
 async function fetchInterfaces() {
@@ -130,7 +129,7 @@ const miniChartOptions: ChartOptions<"line"> = {
       callbacks: {
         label(ctx) {
           const raw = ctx.parsed.y ?? 0;
-          return formatThroughput(raw);
+          return fmtThroughput(raw);
         },
       },
     },
@@ -146,7 +145,7 @@ const miniChartOptions: ChartOptions<"line"> = {
         color: textColor,
         callback(v) {
           const num = typeof v === "number" ? v : Number(v);
-          return formatThroughput(num);
+          return fmtThroughput(num);
         },
       },
       grid: {
@@ -292,13 +291,13 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
                   <div>
                     <div class="text-surface-500 text-[11px]">RX now</div>
                     <div class="font-semibold text-sm">
-                      {{ formatThroughput(iface.stats?.rx_bytes_per_sec || 0) }}
+                      {{ fmtThroughput(iface.stats?.rx_bytes_per_sec || 0) }}
                     </div>
                   </div>
                   <div>
                     <div class="text-surface-500 text-[11px]">TX now</div>
                     <div class="font-semibold text-sm">
-                      {{ formatThroughput(iface.stats?.tx_bytes_per_sec || 0) }}
+                      {{ fmtThroughput(iface.stats?.tx_bytes_per_sec || 0) }}
                     </div>
                   </div>
                 </div>
@@ -310,17 +309,17 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
                   <div>
                     <div class="text-surface-500">RX avg / max</div>
                     <div class="font-mono">
-                      {{ formatThroughput(ifaceStats(iface)!.rx.avg) }}
+                      {{ fmtThroughput(ifaceStats(iface)!.rx.avg) }}
                       /
-                      {{ formatThroughput(ifaceStats(iface)!.rx.max) }}
+                      {{ fmtThroughput(ifaceStats(iface)!.rx.max) }}
                     </div>
                   </div>
                   <div>
                     <div class="text-surface-500">TX avg / max</div>
                     <div class="font-mono">
-                      {{ formatThroughput(ifaceStats(iface)!.tx.avg) }}
+                      {{ fmtThroughput(ifaceStats(iface)!.tx.avg) }}
                       /
-                      {{ formatThroughput(ifaceStats(iface)!.tx.max) }}
+                      {{ fmtThroughput(ifaceStats(iface)!.tx.max) }}
                     </div>
                   </div>
                 </div>
