@@ -198,7 +198,7 @@ onMounted(async () => {
       </div>
       <div class="flex items-center gap-2">
         <span class="text-surface-500 w-24">Description</span>
-        <span class="font-mono">Cross-platform network diagnostic suite</span>
+        <span class="font-mono">Cross-platform network diagnostic tool</span>
       </div>
       <div class="flex items-center gap-2">
         <span class="text-surface-500 w-24">Author</span>
