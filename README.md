@@ -4,7 +4,7 @@
   <img src="resources/icon/nd-icon.png" alt="NetDia Logo" width="128" height="128" />
 </p>
 
-Cross-platform network diagnostic suite built with **Rust** + **Tauri**.  
+Cross-platform network diagnostic tool built with **Rust** + **Tauri**.  
 Inspect, monitor, and analyze your network.
 
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/shellrow/netdia)
@@ -17,6 +17,7 @@ Inspect, monitor, and analyze your network.
 
 - **Interface Overview** - Active interfaces with IPs, gateways, and real-time stats  
 - **Live Traffic Charts** - RX/TX throughput and AVG/MAX
+- **Speed Test** - Measure download & upload speed with real-time progress
 - **Neighbor Scan** - Discover devices in your local network
 - **Net Route** - Inspect routing tables, gateways, and metrics  
 - **Socket Connection** - View active TCP/UDP sockets with process information  
@@ -36,12 +37,15 @@ Inspect, monitor, and analyze your network.
 #### **macOS**
 Download the notarized and signed DMG from the [**Releases page**](https://github.com/shellrow/netdia/releases).  
 Drag & drop to install (Applications folder) 
+> 🔄 NetDia supports in-app automatic updates on macOS.
 
 #### **Windows**
 Available on the [**Microsoft Store**](https://apps.microsoft.com/detail/9NLQ03PT1DXQ)
+> ℹ️ On Windows, updates are managed by the Microsoft Store.  
 
 #### **Linux**
 Available as **AppImage(GPG signed)**, **deb**, and **rpm** packages.
+> 🔄 NetDia supports in-app automatic updates on Linux.
 
 [**Releases page**](https://github.com/shellrow/netdia/releases)
 
