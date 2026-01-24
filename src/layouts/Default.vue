@@ -54,7 +54,7 @@ const MENU: Item[] = [
   { name: "traceroute",      label: "Traceroute", icon: "pi-map" },
   { name: "portscan",        label: "Port Scan", icon: "pi-shield" },
   { name: "hostscan",        label: "Host Scan", icon: "pi-search" },
-  { name: "system-os",       label: "OS", icon: "pi-box", aria: "OS Info" }
+  { name: "os",       label: "OS", icon: "pi-box", aria: "OS Info" }
 ];
 
 const aboutVisible = ref(false);
