@@ -9,7 +9,10 @@ import {
 } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-
+import DataTable from 'primevue/datatable';
+import Column from 'primevue/column';
+import Chart from 'primevue/chart';
+import type { ChartData, ChartOptions } from "chart.js";
 import type {
   TraceProtocol,
   TraceHop,
@@ -18,7 +21,6 @@ import type {
 } from "../types/probe";
 import type { Host } from "../types/net";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
-import type { ChartData, ChartOptions } from "chart.js";
 import { fmtMs } from "../utils/formatter";
 
 const form = reactive({

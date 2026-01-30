@@ -4,6 +4,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { NetworkInterface } from "../types/net"; 
 import { ipListToString } from "../types/net"; 
+import DataTable from 'primevue/datatable';
+import Column from 'primevue/column';
 import { DataTableRowSelectEvent } from 'primevue/datatable';
 import { fmtIfType, hexFlags, severityByOper, shortenIpList, fmtBps, fmtBytesPerSec, fmtBytes } from "../utils/formatter";
 import { readBpsUnit, type UnitPref } from "../utils/preferences";

@@ -2,12 +2,14 @@
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import Chart from 'primevue/chart';
+import type { ChartData, ChartOptions } from "chart.js";
+import Timeline from 'primevue/timeline';
 import type { NetworkInterface } from "../types/net";
 import type { SysInfo } from "../types/system";
 import { fmtIfType, severityByOper, fmtBps, fmtBytesPerSec, fmtBytes } from "../utils/formatter";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
 import { usePrivacyGate } from "../composables/usePrivacyGate";
-import type { ChartData, ChartOptions } from "chart.js";
 import { hexToRgba } from "../utils/color";
 import { DEFAULT_AUTO_INTERNET_CHECK, INTERNET_CHECK_INTERVAL } from "../constants/defaults";
 import { STORAGE_KEYS } from "../constants/storage";

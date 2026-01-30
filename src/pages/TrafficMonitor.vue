@@ -2,9 +2,10 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import Chart from 'primevue/chart';
+import type { ChartData, ChartOptions } from "chart.js";
 import type { NetworkInterface } from "../types/net";
 import { severityByOper, fmtBps, fmtBytesPerSec } from "../utils/formatter";
-import type { ChartData, ChartOptions } from "chart.js";
 import { hexToRgba } from "../utils/color";
 import { readBpsUnit, type UnitPref } from "../utils/preferences";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";

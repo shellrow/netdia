@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import DataTable from 'primevue/datatable';
+import Column from 'primevue/column';
 import type { RouteEntry, RouteFamily } from "../types/route";
 import { flagShort, flagDescription } from "../types/route";
 import { cidr } from "../types/net";

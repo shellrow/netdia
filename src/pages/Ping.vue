@@ -2,6 +2,8 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import DataTable from 'primevue/datatable';
+import Column from 'primevue/column';
 import { PingProtocol, PingSample, PingStat, PingSetting } from "../types/probe";
 import { Host } from "../types/net";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
