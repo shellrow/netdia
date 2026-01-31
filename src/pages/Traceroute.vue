@@ -241,6 +241,7 @@ function fmtIp(ip?: string | null) {
             optionValue="value"
             class="min-w-[120px]"
             aria-label="Protocol"
+            size="small"
           />
         </div>
 
@@ -252,6 +253,7 @@ function fmtIp(ip?: string | null) {
             placeholder="host or IP"
             class="w-[220px]"
             aria-label="Host or IP address"
+            size="small"
           />
         </div>
 
@@ -264,6 +266,7 @@ function fmtIp(ip?: string | null) {
             :max="64"
             inputClass="w-[110px]"
             aria-label="Maximum hops"
+            size="small"
           />
         </div>
 
@@ -276,6 +279,7 @@ function fmtIp(ip?: string | null) {
             :max="5"
             inputClass="w-[120px]"
             aria-label="Number of probes per hop"
+            size="small"
           />
         </div>
 
@@ -289,12 +293,13 @@ function fmtIp(ip?: string | null) {
             :step="100"
             inputClass="w-[130px]"
             aria-label="Timeout in milliseconds"
+            size="small"
           />
         </div>
       </div>
 
       <!-- Right: actions -->
-      <div class="flex flex-wrap items-center gap-3 justify-end">
+      <div class="flex flex-wrap items-end gap-3 justify-end self-end">
         <Button
           label="Start"
           icon="pi pi-play"
@@ -302,6 +307,7 @@ function fmtIp(ip?: string | null) {
           :loading="loading"
           @click="startTrace"
           aria-label="Start traceroute"
+          size="small"
         />
       </div>
     </div>

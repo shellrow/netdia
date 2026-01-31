@@ -104,12 +104,12 @@ onBeforeUnmount(() => {
         <span class="text-surface-500 dark:text-surface-400 text-sm">Routing Table ({{ filtered.length }})</span>
       </div>
       <div class="flex items-center gap-2 justify-end">
-        <Select v-model="family" :options="[{label:'All', value:'All'},{label:'IPv4', value:'Ipv4'},{label:'IPv6', value:'Ipv6'}]" optionLabel="label" optionValue="value" class="w-28" />
+        <Select v-model="family" :options="[{label:'All', value:'All'},{label:'IPv4', value:'Ipv4'},{label:'IPv6', value:'Ipv6'}]" optionLabel="label" optionValue="value" class="w-28" size="small" />
         <InputGroup class="max-w-[220px]">
           <InputGroupAddon><i class="pi pi-search"/></InputGroupAddon>
-          <InputText v-model="q" placeholder="Search (dst/gw/if/flags...)" />
+          <InputText v-model="q" placeholder="Search (dst/gw/if/flags...)" size="small" />
         </InputGroup>
-        <Button outlined icon="pi pi-refresh" :loading="loading" @click="fetchRoutes" class="w-9 h-9" severity="secondary" />
+        <Button outlined icon="pi pi-refresh" :loading="loading" @click="fetchRoutes" class="icon-btn" severity="secondary" />
       </div>
     </div>
 

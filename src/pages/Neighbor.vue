@@ -154,8 +154,9 @@ onBeforeUnmount(() => {
           placeholder="Select interface"
           class="min-w-64"
           :disabled="running || loading"
+          size="small"
         />
-        <Chip v-if="selectedIf" :label="selectedCidr" class="font-mono" />
+        <Tag v-if="selectedIf" :value="selectedCidr" class="font-mono" severity="info"/>
         <span v-else class="text-surface-500 text-xs">No eligible interface</span>
       </div>
 
@@ -166,6 +167,7 @@ onBeforeUnmount(() => {
           :disabled="running || !selectedIf"
           :loading="loading"
           @click="startScan"
+          size="small"
         />
       </div>
     </div>

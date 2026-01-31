@@ -279,6 +279,7 @@ onBeforeUnmount(() => {
             optionLabel="label"
             optionValue="value"
             class="min-w-[120px]"
+            size="small"
           />
         </div>
 
@@ -288,6 +289,7 @@ onBeforeUnmount(() => {
             v-model="form.host"
             placeholder="e.g. 192.168.1.1 or host"
             class="w-60"
+            size="small"
           />
         </div>
 
@@ -304,6 +306,7 @@ onBeforeUnmount(() => {
             optionLabel="label"
             optionValue="value"
             class="min-w-[140px]"
+            size="small"
           />
         </div>
 
@@ -313,6 +316,7 @@ onBeforeUnmount(() => {
             v-model="form.userPortsText"
             placeholder="e.g. 80,443,8080-8090"
             class="w-[220px]"
+            size="small"
           />
         </div>
 
@@ -324,6 +328,7 @@ onBeforeUnmount(() => {
             :max="10000"
             :step="100"
             inputClass="w-[120px]"
+            size="small"
           />
         </div>
 
@@ -345,16 +350,15 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Right: actions -->
-      <div class="flex flex-wrap items-center gap-3 justify-end">
-        <div class="flex items-center gap-2">
-          <Button
-            label="Start"
-            icon="pi pi-play"
-            :disabled="running || !canStart"
-            :loading="loading"
-            @click="startScan"
-          />
-        </div>
+      <div class="flex flex-wrap items-end gap-3 justify-end self-end">
+        <Button
+          label="Start"
+          icon="pi pi-play"
+          :disabled="running || !canStart"
+          :loading="loading"
+          @click="startScan"
+          size="small"
+        />
       </div>
     </div>
 

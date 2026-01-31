@@ -198,7 +198,7 @@ const filtered = computed(() => {
       </div>
 
       <!-- Right -->
-      <div class="flex flex-wrap items-center gap-2 justify-end">
+      <div class="flex items-center gap-2 justify-end">
         <!-- MultiSelect -->
         <MultiSelect
           v-model="visibleColumns"
@@ -216,30 +216,29 @@ const filtered = computed(() => {
           optionValue="value"
           placeholder="Columns"
           class="min-w-40"
-          display="chip"
-          :maxSelectedLabels="4"
+          :maxSelectedLabels="4" 
+          size="small"
         />
 
         <!-- Search + Refresh -->
-        <div class="flex items-center gap-2">
-          <InputGroup class="max-w-[220px]">
-            <InputGroupAddon><i class="pi pi-search"></i></InputGroupAddon>
-            <InputText
-              v-model="globalFilter"
-              placeholder="Search (name/ip/mac...)"
-              class="flex-1 min-w-0"
-            />
-          </InputGroup>
-
-          <Button
-            outlined
-            icon="pi pi-refresh"
-            severity="secondary"
-            class="w-9 h-9"
-            :loading="loading"
-            @click="reloadInterfaces"
+        <InputGroup class="max-w-[220px]">
+          <InputGroupAddon><i class="pi pi-search"></i></InputGroupAddon>
+          <InputText
+            v-model="globalFilter"
+            placeholder="Search (name/ip/mac...)"
+            class="flex-1 min-w-0"
+            size="small"
           />
-        </div>
+        </InputGroup>
+
+        <Button
+          outlined
+          icon="pi pi-refresh"
+          severity="secondary"
+          class="icon-btn"
+          :loading="loading"
+          @click="reloadInterfaces"
+        />
       </div>
     </div>
     <!-- Table -->

@@ -682,15 +682,17 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .nd-marker {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: white;
   border-radius: 9999px;
+  color: #fff;
   box-shadow: var(--shadow-2);
   z-index: 10;
+  line-height: 1;
 }
 
 .nd-node-card {
@@ -759,11 +761,6 @@ onBeforeUnmount(() => {
   background-color: rgba(255, 255, 255, 0.36);
 }
 
-.nd-marker {
-  width: 24px;
-  height: 24px;
-}
-
 ::v-deep(.nd-path-timeline .p-timeline-event-separator) {
   min-height: 24px;
 }
@@ -827,7 +824,7 @@ onBeforeUnmount(() => {
           outlined
           :icon="publicIpVisible ? 'pi pi-eye' : 'pi pi-eye-slash'"
           @click="togglePrivacy"
-          class="w-9 h-9"
+          class="icon-btn"
           severity="secondary"
           title="Toggle privacy filters"
         />
@@ -835,7 +832,7 @@ onBeforeUnmount(() => {
           outlined
           :icon="autoInternetCheck ? 'pi pi-globe' : 'pi pi-times-circle'"
           @click="toggleAutoInternetCheck"
-          class="w-9 h-9"
+          class="icon-btn"
           severity="secondary"
           :title="autoInternetCheck ? 'Auto Internet Check: ON' : 'Auto Internet Check: OFF'"
         />
@@ -844,7 +841,7 @@ onBeforeUnmount(() => {
           icon="pi pi-refresh"
           :loading="loading"
           @click="fetchAll(); refreshIpInfo(true)"
-          class="w-9 h-9"
+          class="icon-btn"
           severity="secondary"
           title="Refresh data manually"
         />

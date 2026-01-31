@@ -239,8 +239,8 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
           optionValue="value"
           placeholder="Select interfaces"
           class="min-w-48"
-          display="chip"
           :maxSelectedLabels="3"
+          size="small"
         />
         <span class="text-xs text-surface-500">
           Unit: <span class="font-mono">{{ bpsUnit }}</span>

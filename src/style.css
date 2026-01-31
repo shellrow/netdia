@@ -19,3 +19,13 @@
 
   cursor: text;
 }
+
+.icon-btn {
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}

@@ -82,7 +82,6 @@ onMounted(async () => {
       <div class="flex flex-col h-full">
         <!-- Brand / Compact toggle -->
         <div class="p-4 flex items-center gap-3" :class="isCompact ? 'justify-center' : ''">
-          <!-- <span v-if="!isCompact" class="text-lg font-semibold leading-tight text-surface-900 dark:text-surface-0">NetDia</span> -->
           <img
             v-if="!isCompact"
             :src="currentLogoFile"
@@ -92,7 +91,7 @@ onMounted(async () => {
           <Button
             icon="pi pi-bars"
             text
-            class="w-9 h-9 ml-auto"
+            class="icon-btn ml-auto"
             :class="isCompact ? 'ml-0!' : ''"
             @click="isCompact = !isCompact"
             v-tooltip.top="isCompact ? 'Expand sidebar' : 'Collapse sidebar'"
@@ -160,16 +159,14 @@ onMounted(async () => {
         </div>
         <!-- Actions -->
         <div class="flex items-center gap-2">
-          <!-- <Button outlined :icon="currentThemeIcon" v-tooltip.bottom="'Toggle Theme'" severity="secondary" class="rounded-lg! w-9 h-9" aria-label="Toggle theme" @click="toggleTheme" /> -->
-          <Button outlined icon="pi pi-bell" v-tooltip.bottom="'Notifications'" severity="secondary" class="rounded-lg! w-9 h-9" aria-label="Notifications" />
-          <Button outlined icon="pi pi-info-circle" v-tooltip.bottom="'About'" severity="secondary" class="rounded-lg! w-9 h-9" aria-label="About" @click="aboutVisible = true" />
+          <!-- <Button outlined :icon="currentThemeIcon" v-tooltip.bottom="'Toggle Theme'" severity="secondary" class="icon-btn" aria-label="Toggle theme" @click="toggleTheme" /> -->
+          <Button outlined icon="pi pi-bell" v-tooltip.bottom="'Notifications'" severity="secondary" class="icon-btn" aria-label="Notifications" />
+          <Button outlined icon="pi pi-info-circle" v-tooltip.bottom="'About'" severity="secondary" class="icon-btn" aria-label="About" @click="aboutVisible = true" />
         </div>
       </header>
       <!-- Content -->
-      <main class="px-2 pt-2 pb-2 flex flex-col flex-auto min-h-0 overflow-hidden">
-        <div class="border border-surface-200 dark:border-surface-700 rounded-2xl bg-surface-0 dark:bg-surface-950 flex-auto min-h-0 overflow-auto p-0">
-          <router-view />
-        </div>
+      <main class="px-0 pt-0 pb-0 flex flex-col flex-auto min-h-0 overflow-hidden">
+        <router-view />
       </main>
     </div>
   </div>

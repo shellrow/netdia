@@ -261,8 +261,8 @@ function fmtDuration(ms: number): string {
         <span class="text-surface-500 dark:text-surface-400 text-sm">Public IP Information</span>
       </div>
       <div class="flex items-center gap-2 justify-end">
-        <Button outlined :icon="publicIpVisible ? 'pi pi-eye' : 'pi pi-eye-slash'" @click="togglePublicIp" class="w-9 h-9" severity="secondary" />
-        <Button outlined icon="pi pi-refresh" :loading="loading" @click="refresh" class="w-9 h-9" severity="secondary" />
+        <Button outlined :icon="publicIpVisible ? 'pi pi-eye' : 'pi pi-eye-slash'" @click="togglePublicIp" class="icon-btn" severity="secondary" />
+        <Button outlined icon="pi pi-refresh" :loading="loading" @click="refresh" class="icon-btn" severity="secondary" />
       </div>
     </div>
 
@@ -378,6 +378,7 @@ function fmtDuration(ms: number): string {
                     optionLabel="label"
                     optionValue="value"
                     :disabled="stRunning || stStarting"
+                    size="small"
                   />
                   <Select
                     v-model="selectedSize"
@@ -386,12 +387,14 @@ function fmtDuration(ms: number): string {
                     placeholder="Select size"
                     :disabled="stRunning || stStarting"
                     class="w-36"
+                    size="small"
                   />
                   <Button
                     icon="pi pi-play"
                     label="Start"
                     @click="startSpeedtest"
                     :disabled="stRunning || stStarting"
+                    size="small"
                   />
                   <Button
                     icon="pi pi-stop"
@@ -399,6 +402,7 @@ function fmtDuration(ms: number): string {
                     severity="secondary"
                     @click="stopSpeedtest"
                     :disabled="!stRunning && !stStarting"
+                    size="small"
                   />
                 </div>
               </div>
