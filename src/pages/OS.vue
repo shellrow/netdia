@@ -26,8 +26,8 @@ const { hostnameVisible, toggleHostname, hostnameGate } = usePrivacyGate();
         </span>
       </div>
       <div class="flex items-center gap-2 justify-end">
-        <Button outlined :icon="hostnameVisible ? 'pi pi-eye' : 'pi pi-eye-slash'" @click="toggleHostname" class="w-9 h-9" severity="secondary" />
-        <Button outlined icon="pi pi-refresh" :loading="loading" @click="fetchSys" class="w-9 h-9" severity="secondary" />
+        <Button outlined :icon="hostnameVisible ? 'pi pi-eye' : 'pi pi-eye-slash'" @click="toggleHostname" class="icon-btn" severity="secondary" />
+        <Button outlined icon="pi pi-refresh" :loading="loading" @click="fetchSys" class="icon-btn" severity="secondary" />
       </div>
     </div>
 

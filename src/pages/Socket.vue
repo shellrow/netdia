@@ -215,54 +215,55 @@ onBeforeUnmount(() => {
     ref="toolbarRef"
     class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2"
     >
-    <div class="flex items-center gap-3 min-w-0">
-        <span class="text-surface-500 dark:text-surface-400 text-sm">
-        Socket Connections ({{ filtered.length }})
-        </span>
-    </div>
+      <div class="flex items-center gap-3 min-w-0">
+          <span class="text-surface-500 dark:text-surface-400 text-sm">
+          Socket Connections ({{ filtered.length }})
+          </span>
+      </div>
 
-    <div class="flex items-center gap-2 justify-end flex-nowrap min-w-0">
+      <div class="flex items-center gap-2 justify-end">
         <Select
-        v-model="proto"
-        :options="[
-            { label: 'All', value: 'All' },
-            { label: 'TCP', value: 'TCP' },
-            { label: 'UDP', value: 'UDP' },
-        ]"
-        optionLabel="label"
-        optionValue="value"
-        class="w-24 shrink-0"
+          v-model="proto"
+          :options="[
+              { label: 'All', value: 'All' },
+              { label: 'TCP', value: 'TCP' },
+              { label: 'UDP', value: 'UDP' },
+          ]"
+          optionLabel="label"
+          optionValue="value"
+          class="w-28 shrink-0" 
+          size="small"
         />
         <Select
-        v-model="family"
-        :options="[
-            { label: 'All', value: 'All' },
-            { label: 'IPv4', value: 'Ipv4' },
-            { label: 'IPv6', value: 'Ipv6' },
-        ]"
-        optionLabel="label"
-        optionValue="value"
-        class="w-24 shrink-0"
+          v-model="family"
+          :options="[
+              { label: 'All', value: 'All' },
+              { label: 'IPv4', value: 'Ipv4' },
+              { label: 'IPv6', value: 'Ipv6' },
+          ]"
+          optionLabel="label"
+          optionValue="value"
+          class="w-28 shrink-0" 
+          size="small"
         />
-        <div class="flex items-center gap-2 min-w-0">
-        <InputGroup class="max-w-[260px] w-full">
+        <InputGroup class="flex-1 min-w-0 max-w-[260px]">
             <InputGroupAddon><i class="pi pi-search" /></InputGroupAddon>
             <InputText
-            v-model="q"
-            placeholder="Search (addr/port/proc/state...)"
-            class="w-full"
+              v-model="q"
+              placeholder="Search (addr/port/proc/state...)"
+              class="flex-1 min-w-0" 
+              size="small"
             />
         </InputGroup>
         <Button
-            outlined
-            icon="pi pi-refresh"
-            :loading="loading"
-            @click="fetchSockets"
-            class="w-9 h-9 shrink-0"
-            severity="secondary"
+          outlined
+          icon="pi pi-refresh"
+          :loading="loading"
+          @click="fetchSockets"
+          class="icon-btn"
+          severity="secondary"
         />
-        </div>
-    </div>
+      </div>
     </div>
 
     <!-- Table -->

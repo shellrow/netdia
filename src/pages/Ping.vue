@@ -146,6 +146,7 @@ const lossRate = computed(() => {
             optionValue="value"
             class="min-w-[120px]"
             aria-label="Protocol"
+            size="small"
           />
         </div>
 
@@ -157,6 +158,7 @@ const lossRate = computed(() => {
             placeholder="host or IP"
             class="w-[200px]"
             aria-label="Host or IP address"
+            size="small"
           />
         </div>
 
@@ -167,7 +169,8 @@ const lossRate = computed(() => {
             v-model="form.port"
             :min="1" :max="65535"
             inputClass="w-[120px]"
-            aria-label="Port"
+            aria-label="Port" 
+            size="small"
           />
         </div>
 
@@ -178,7 +181,8 @@ const lossRate = computed(() => {
             v-model="form.count"
             :min="1" :max="1000"
             inputClass="w-[110px]"
-            aria-label="Packet count"
+            aria-label="Packet count" 
+            size="small"
           />
         </div>
 
@@ -190,6 +194,7 @@ const lossRate = computed(() => {
             :min="100" :max="60000" :step="100"
             inputClass="w-[130px]"
             aria-label="Timeout in milliseconds"
+            size="small"
           />
         </div>
 
@@ -201,6 +206,7 @@ const lossRate = computed(() => {
             :min="100" :max="60000" :step="10"
             inputClass="w-[130px]"
             aria-label="Send interval in milliseconds"
+            size="small"
           />
         </div>
 
@@ -212,22 +218,22 @@ const lossRate = computed(() => {
             :min="1" :max="255"
             inputClass="w-[120px]"
             aria-label="Hop limit"
+            size="small"
           />
         </div>
       </div>
 
       <!-- Right: actions -->
-      <div class="flex flex-wrap items-center gap-3 justify-end">
-        <div class="flex items-center gap-2">
-          <Button
-            label="Start"
-            icon="pi pi-play"
-            :disabled="running || !form.host?.trim()"
-            :loading="loading"
-            @click="startPing"
-            aria-label="Start ping"
-          />
-        </div>
+      <div class="flex flex-wrap items-end gap-3 justify-end self-end">
+        <Button
+          label="Start"
+          icon="pi pi-play"
+          :disabled="running || !form.host?.trim()"
+          :loading="loading"
+          @click="startPing"
+          aria-label="Start ping"
+          size="small"
+        />
       </div>
     </div>
 

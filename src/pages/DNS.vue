@@ -65,8 +65,9 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
             placeholder="domain (e.g. example.com)"
             @keydown="onEnter"
             class="flex-1 min-w-0"
+            size="small"
           />
-          <Button label="Lookup" icon="pi pi-search" :loading="loading" @click="runLookup" />
+          <Button label="Lookup" icon="pi pi-search" :loading="loading" @click="runLookup" size="small" />
         </InputGroup>
       </div>
     </div>

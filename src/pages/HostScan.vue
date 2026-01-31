@@ -245,7 +245,8 @@ onBeforeUnmount(() => {
             ]"
             optionLabel="label"
             optionValue="value"
-            class="min-w-40"
+            class="min-w-40" 
+            size="small"
           />
         </div>
 
@@ -256,13 +257,14 @@ onBeforeUnmount(() => {
             v-model="form.cidr"
             placeholder="e.g. 192.168.1.0/24"
             class="w-[220px]"
+            size="small"
           />
         </div>
         <div v-else class="flex flex-col gap-1">
           <label class="text-xs text-surface-500"
             >Host List (newline / space / comma)</label
           >
-          <Textarea v-model="form.list" rows="2" class="w-[280px]" />
+          <Textarea v-model="form.list" rows="2" class="w-[280px]" size="small" />
         </div>
 
         <!-- Options -->
@@ -274,6 +276,7 @@ onBeforeUnmount(() => {
             :max="60000"
             :step="100"
             inputClass="w-[120px]"
+            size="small"
           />
         </div>
         <div class="flex flex-col gap-1">
@@ -283,6 +286,7 @@ onBeforeUnmount(() => {
             :min="1"
             :max="255"
             inputClass="w-[120px]"
+            size="small"
           />
         </div>
         <div class="flex items-center gap-2 mb-2">
@@ -297,16 +301,15 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="flex flex-wrap items-end gap-3 justify-end">
-        <div class="flex items-center gap-2">
-          <Button
-            label="Start"
-            icon="pi pi-play"
-            :disabled="!canStart"
-            :loading="loading"
-            @click="startScan"
-          />
-        </div>
+      <div class="flex flex-wrap items-end gap-3 justify-end self-end">
+        <Button
+          label="Start"
+          icon="pi pi-play"
+          :disabled="!canStart"
+          :loading="loading"
+          @click="startScan"
+          size="small"
+        />
       </div>
     </div>
 
