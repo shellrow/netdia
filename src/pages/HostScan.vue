@@ -2,6 +2,9 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import DataTable from 'primevue/datatable';
+import Column from 'primevue/column';
+import Textarea from 'primevue/textarea';
 import { HostScanProgress, HostScanReport, HostScanRequest } from "../types/probe";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
 import { fmtMs } from "../utils/formatter";

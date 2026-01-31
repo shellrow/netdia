@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import DataTable from 'primevue/datatable';
+import Column from 'primevue/column';
 import { DomainLookupInfo } from "../types/dns";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
 import { STORAGE_KEYS } from "../constants/storage";

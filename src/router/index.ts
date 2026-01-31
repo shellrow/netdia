@@ -1,19 +1,19 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
 
-import Dashboard from '@/pages/Dashboard.vue';
-import Interfaces from '@/pages/Interfaces.vue';
-import Routes from '@/pages/Routes.vue';
-import Internet from '@/pages/Internet.vue';
-import Socket from '@/pages/Socket.vue';
-import OsInfo from '@/pages/OS.vue';
-import Settings from '@/pages/Settings.vue';
-import DNS from '@/pages/DNS.vue';
-import Ping from '@/pages/Ping.vue';
-import Traceroute from '@/pages/Traceroute.vue';
-import PortScan from '@/pages/PortScan.vue';
-import HostScan from '@/pages/HostScan.vue';
-import Neighbor from '@/pages/Neighbor.vue';
-import TrafficMonitor from '@/pages/TrafficMonitor.vue';
+const Dashboard = () => import('@/pages/Dashboard.vue');
+const Interfaces = () => import('@/pages/Interfaces.vue');
+const Routes = () => import('@/pages/Routes.vue');
+const Internet = () => import('@/pages/Internet.vue');
+const Socket = () => import('@/pages/Socket.vue');
+const OsInfo = () => import('@/pages/OS.vue');
+const Settings = () => import('@/pages/Settings.vue');
+const DNS = () => import('@/pages/DNS.vue');
+const Ping = () => import('@/pages/Ping.vue');
+const Traceroute = () => import('@/pages/Traceroute.vue');
+const PortScan = () => import('@/pages/PortScan.vue');
+const HostScan = () => import('@/pages/HostScan.vue');
+const Neighbor = () => import('@/pages/Neighbor.vue');
+const TrafficMonitor = () => import('@/pages/TrafficMonitor.vue');
 
 const router = createRouter({
   history: createWebHashHistory(),
