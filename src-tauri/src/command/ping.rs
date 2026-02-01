@@ -48,18 +48,14 @@ pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<(), String> {
             PingProtocol::Icmp => {
                 ping::icmp::icmp_ping(&app, &run_id, src_ip, setting, token).await
             }
-            PingProtocol::Tcp => {
-                ping::tcp::tcp_ping(&app, &run_id, src_ip, setting, token).await
-            }
+            PingProtocol::Tcp => ping::tcp::tcp_ping(&app, &run_id, src_ip, setting, token).await,
             PingProtocol::Udp => {
                 ping::udp::udp_ping_icmp_unreach(&app, &run_id, src_ip, setting, token).await
             }
             PingProtocol::Quic => {
                 ping::quic::quic_ping(&app, &run_id, src_ip, setting, token).await
             }
-            PingProtocol::Http => {
-                ping::http::http_ping(&app, &run_id, setting, token).await
-            }
+            PingProtocol::Http => ping::http::http_ping(&app, &run_id, setting, token).await,
         };
 
         if let Err(e) = res {

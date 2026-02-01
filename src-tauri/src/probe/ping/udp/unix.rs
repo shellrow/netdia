@@ -1,22 +1,22 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::time::{Duration, Instant};
+use crate::model::ping::PingCancelledPayload;
+use crate::model::ping::{
+    PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat,
+};
+use crate::model::probe::{ProbeStatus, ProbeStatusKind};
+use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
+use crate::socket::udp::{AsyncUdpSocket, UdpConfig};
+use crate::socket::SocketFamily;
 use anyhow::Result;
-use tokio_util::sync::CancellationToken;
 use bytes::Bytes;
 use nex_packet::icmp::IcmpType;
 use nex_packet::icmpv6::Icmpv6Packet;
 use nex_packet::icmpv6::Icmpv6Type;
 use nex_packet::packet::Packet;
 use nex_packet::{icmp::IcmpPacket, ip::IpNextProtocol, ipv4::Ipv4Packet};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-use crate::model::probe::{ProbeStatus, ProbeStatusKind};
-use crate::model::ping::PingCancelledPayload;
-use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
-use crate::socket::udp::{AsyncUdpSocket, UdpConfig};
-use crate::socket::SocketFamily;
-use crate::model::ping::{
-    PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat,
-};
+use tokio_util::sync::CancellationToken;
 
 /// Default base target UDP port for traceroute or ping
 const DEFAULT_BASE_TARGET_UDP_PORT: u16 = 33435;
@@ -58,7 +58,7 @@ pub async fn udp_ping_icmp_unreach(
     run_id: &str,
     _src_ip: IpAddr,
     setting: PingSetting,
-    token: CancellationToken
+    token: CancellationToken,
 ) -> Result<PingStat> {
     let dst_ip = setting.ip_addr;
     //let dst_port = setting.port.unwrap_or(DEFAULT_BASE_TARGET_UDP_PORT);
@@ -94,8 +94,8 @@ pub async fn udp_ping_icmp_unreach(
     for seq in 1..=setting.count {
         if token.is_cancelled() {
             let _ = app.emit(
-        "ping:cancelled",
-        PingCancelledPayload {
+                "ping:cancelled",
+                PingCancelledPayload {
                     run_id: run_id.to_string(),
                 },
             );

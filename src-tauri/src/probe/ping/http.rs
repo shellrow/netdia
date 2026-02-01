@@ -1,11 +1,12 @@
 use anyhow::Result;
 use reqwest::Client;
-use tokio_util::sync::CancellationToken;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 
 use crate::model::ping::{
-    PingCancelledPayload, PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat
+    PingCancelledPayload, PingDonePayload, PingProgressPayload, PingProtocol, PingSample,
+    PingSetting, PingStat,
 };
 use crate::model::probe::{ProbeStatus, ProbeStatusKind};
 use crate::probe::DEFAULT_USER_AGENT_CHROME;
@@ -33,7 +34,12 @@ fn summarize_rtts(rtts_ms: &[u64]) -> (Option<u64>, Option<u64>, Option<u64>) {
     )
 }
 
-pub async fn http_ping(app: &AppHandle, run_id: &str, setting: PingSetting, token: CancellationToken) -> Result<PingStat> {
+pub async fn http_ping(
+    app: &AppHandle,
+    run_id: &str,
+    setting: PingSetting,
+    token: CancellationToken,
+) -> Result<PingStat> {
     // Build HTTP client
     let per_req_to = Duration::from_millis(setting.timeout_ms);
     let client = Client::builder()
@@ -72,8 +78,8 @@ pub async fn http_ping(app: &AppHandle, run_id: &str, setting: PingSetting, toke
     for seq in 1..=setting.count {
         if token.is_cancelled() {
             let _ = app.emit(
-        "ping:cancelled",
-        PingCancelledPayload {
+                "ping:cancelled",
+                PingCancelledPayload {
                     run_id: run_id.to_string(),
                 },
             );

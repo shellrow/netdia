@@ -1,18 +1,18 @@
 use anyhow::Result;
 use futures::{stream, StreamExt};
 use rand::{seq::SliceRandom, thread_rng, Rng};
-use tokio_util::sync::CancellationToken;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{oneshot, Mutex};
+use tokio_util::sync::CancellationToken;
 
 use crate::model::endpoint::Host;
 use crate::model::scan::{
-    HostScanCancelledPayload, HostScanProgress, HostScanProgressPayload,
-    HostScanReport, HostScanSetting, HostState, HostScanStartPayload,
+    HostScanCancelledPayload, HostScanProgress, HostScanProgressPayload, HostScanReport,
+    HostScanSetting, HostScanStartPayload, HostState,
 };
 use crate::probe::packet::{build_icmp_echo_bytes, parse_icmp_echo_v4, parse_icmp_echo_v6};
 use crate::probe::scan::progress::ThrottledProgress;
@@ -68,10 +68,18 @@ pub async fn host_scan(
     let app = app.clone();
     let run_id = run_id.to_string();
 
-    let _ = app.emit("hostscan:start", HostScanStartPayload { run_id: run_id.clone() });
+    let _ = app.emit(
+        "hostscan:start",
+        HostScanStartPayload {
+            run_id: run_id.clone(),
+        },
+    );
 
     let timeout = Duration::from_millis(setting.timeout_ms);
-    let payload = setting.payload.clone().unwrap_or_else(|| "netd".to_string());
+    let payload = setting
+        .payload
+        .clone()
+        .unwrap_or_else(|| "netd".to_string());
     let concurrency = setting.concurrency.unwrap_or(hosts_concurrency());
     if !setting.ordered {
         setting.targets.shuffle(&mut thread_rng());
@@ -79,11 +87,17 @@ pub async fn host_scan(
 
     // resolve
     let target_hosts: Vec<Host> = setting.resolve_targets().await;
-    let target_map: HashMap<IpAddr, Host> = target_hosts.iter().map(|h| (h.ip, h.clone())).collect();
+    let target_map: HashMap<IpAddr, Host> =
+        target_hosts.iter().map(|h| (h.ip, h.clone())).collect();
     let total = target_map.len() as u32;
 
     if total == 0 {
-        let report = HostScanReport { run_id: run_id.clone(), alive: vec![], unreachable: vec![], total };
+        let report = HostScanReport {
+            run_id: run_id.clone(),
+            alive: vec![],
+            unreachable: vec![],
+            total,
+        };
         let _ = app.emit("hostscan:done", report.clone());
         return Ok(report);
     }
@@ -110,8 +124,12 @@ pub async fn host_scan(
     let pending_v4: Arc<Mutex<HashMap<IpAddr, Pending>>> = Arc::new(Mutex::new(HashMap::new()));
     let pending_v6: Arc<Mutex<HashMap<IpAddr, Pending>>> = Arc::new(Mutex::new(HashMap::new()));
 
-    let rx_v4 = socket_v4.as_ref().map(|s| spawn_receiver(s.clone(), pending_v4.clone(), false));
-    let rx_v6 = socket_v6.as_ref().map(|s| spawn_receiver(s.clone(), pending_v6.clone(), true));
+    let rx_v4 = socket_v4
+        .as_ref()
+        .map(|s| spawn_receiver(s.clone(), pending_v4.clone(), false));
+    let rx_v6 = socket_v6
+        .as_ref()
+        .map(|s| spawn_receiver(s.clone(), pending_v6.clone(), true));
 
     let ip_list: Vec<IpAddr> = target_map.keys().cloned().collect();
 
@@ -206,7 +224,7 @@ pub async fn host_scan(
                             last_err = Some(format!("send error: {}", e));
                             continue;
                         }
-                        
+
                         let wait_res = tokio::select! {
                             _ = token.cancelled() => {
                                 let mut map = pending_map.lock().await;
@@ -291,7 +309,9 @@ pub async fn host_scan(
             s = tasks.next() => s,
         };
 
-        let Some(item) = item else { break; };
+        let Some(item) = item else {
+            break;
+        };
 
         if let Some(p) = item {
             match p.state {
@@ -316,11 +336,20 @@ pub async fn host_scan(
     drop(socket_v6_for_tasks);
     drop(socket_v4);
     drop(socket_v6);
-    if let Some(h) = rx_v4 { let _ = h.abort(); }
-    if let Some(h) = rx_v6 { let _ = h.abort(); }
+    if let Some(h) = rx_v4 {
+        let _ = h.abort();
+    }
+    if let Some(h) = rx_v6 {
+        let _ = h.abort();
+    }
 
     if cancelled || token.is_cancelled() {
-        let _ = app.emit("hostscan:cancelled", HostScanCancelledPayload { run_id: run_id.clone() });
+        let _ = app.emit(
+            "hostscan:cancelled",
+            HostScanCancelledPayload {
+                run_id: run_id.clone(),
+            },
+        );
         return Err(anyhow::anyhow!("cancelled"));
     }
 

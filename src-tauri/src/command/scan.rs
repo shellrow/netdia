@@ -4,8 +4,8 @@ use netdev::Interface;
 use tauri::{AppHandle, Emitter};
 
 use crate::model::scan::{
-    HostScanReport, HostScanRequest, HostScanSetting, PortScanProtocol,
-    PortScanReport, PortScanSetting, TargetPortsPreset,
+    HostScanReport, HostScanRequest, HostScanSetting, PortScanProtocol, PortScanReport,
+    PortScanSetting, TargetPortsPreset,
 };
 
 use crate::operation::{OP_HOSTSCAN, OP_NEIGHBORSCAN, OP_PORTSCAN};
@@ -82,9 +82,11 @@ pub async fn port_scan(app: AppHandle, setting: PortScanSetting) -> Result<PortS
     );
 
     match setting.protocol {
-        PortScanProtocol::Tcp => crate::probe::scan::tcp::port_scan(&app, &run_id, src_ip, setting, token)
-            .await
-            .map_err(|e| e.to_string()),
+        PortScanProtocol::Tcp => {
+            crate::probe::scan::tcp::port_scan(&app, &run_id, src_ip, setting, token)
+                .await
+                .map_err(|e| e.to_string())
+        }
         PortScanProtocol::Quic => {
             crate::probe::scan::quic::port_scan(&app, &run_id, src_ip, setting, token)
                 .await
@@ -124,9 +126,16 @@ pub async fn host_scan(app: AppHandle, setting: HostScanRequest) -> Result<HostS
             run_id: run_id.clone(),
         },
     );
-    crate::probe::scan::icmp::host_scan(&app, &run_id, src_ipv4_opt, src_ipv6_opt, scan_setting, token)
-        .await
-        .map_err(|e| e.to_string())
+    crate::probe::scan::icmp::host_scan(
+        &app,
+        &run_id,
+        src_ipv4_opt,
+        src_ipv6_opt,
+        scan_setting,
+        token,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

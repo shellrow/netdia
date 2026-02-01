@@ -1,16 +1,17 @@
 use anyhow::Result;
-use tokio_util::sync::CancellationToken;
 use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     model::{
         ping::{
-            PingCancelledPayload, PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat
+            PingCancelledPayload, PingDonePayload, PingProgressPayload, PingProtocol, PingSample,
+            PingSetting, PingStat,
         },
         probe::{ProbeStatus, ProbeStatusKind},
     },
@@ -43,7 +44,7 @@ pub async fn icmp_ping(
     run_id: &str,
     src_ip: IpAddr,
     setting: PingSetting,
-    token: CancellationToken
+    token: CancellationToken,
 ) -> Result<PingStat> {
     let cfg = if setting.ip_addr.is_ipv4() {
         let mut c = IcmpConfig::new(IcmpKind::V4);
@@ -75,8 +76,8 @@ pub async fn icmp_ping(
     for seq in 1..=setting.count {
         if token.is_cancelled() {
             let _ = app.emit(
-        "ping:cancelled",
-        PingCancelledPayload {
+                "ping:cancelled",
+                PingCancelledPayload {
                     run_id: run_id.to_string(),
                 },
             );

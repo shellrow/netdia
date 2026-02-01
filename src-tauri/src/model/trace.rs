@@ -1,5 +1,5 @@
-use std::net::IpAddr;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 
 /// Protocol used for traceroute
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

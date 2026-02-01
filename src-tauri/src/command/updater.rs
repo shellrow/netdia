@@ -34,15 +34,26 @@ pub struct UpdateInfo {
 #[derive(Clone, Serialize)]
 #[serde(tag = "event", content = "data")]
 pub enum DownloadEvent {
-    Started { content_length: Option<u64> },
-    Progress { chunk_length: usize, downloaded: u64, content_length: Option<u64> },
+    Started {
+        content_length: Option<u64>,
+    },
+    Progress {
+        chunk_length: usize,
+        downloaded: u64,
+        content_length: Option<u64>,
+    },
     Finished,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 #[cfg(all(desktop, not(windows)))]
 #[tauri::command]
-pub async fn check_update(app: AppHandle, pending: State<'_, PendingUpdate>) -> Result<UpdateInfo, String> {
+pub async fn check_update(
+    app: AppHandle,
+    pending: State<'_, PendingUpdate>,
+) -> Result<UpdateInfo, String> {
     let update = app
         .updater()
         .map_err(|e| e.to_string())?
@@ -56,7 +67,7 @@ pub async fn check_update(app: AppHandle, pending: State<'_, PendingUpdate>) -> 
             version: Some(up.version.clone()),
             current_version: Some(up.current_version.clone()),
             notes: up.body.clone(),
-            pub_date: up.date.map(|d| { d.format(&Rfc3339) .unwrap_or_default() }),
+            pub_date: up.date.map(|d| d.format(&Rfc3339).unwrap_or_default()),
             store_url: None,
         }
     } else {
@@ -78,7 +89,10 @@ pub async fn check_update(app: AppHandle, pending: State<'_, PendingUpdate>) -> 
 
 #[cfg(windows)]
 #[tauri::command]
-pub async fn check_update(_app: AppHandle, _pending: State<'_, PendingUpdate>) -> Result<UpdateInfo, String> {
+pub async fn check_update(
+    _app: AppHandle,
+    _pending: State<'_, PendingUpdate>,
+) -> Result<UpdateInfo, String> {
     // Windows: DO NOT support in-app update, open Microsoft Store instead
     return Ok(UpdateInfo {
         available: false,
@@ -92,7 +106,10 @@ pub async fn check_update(_app: AppHandle, _pending: State<'_, PendingUpdate>) -
 
 #[cfg(not(desktop))]
 #[tauri::command]
-pub async fn check_update(_app: AppHandle, _pending: State<'_, PendingUpdate>) -> Result<UpdateInfo, String> {
+pub async fn check_update(
+    _app: AppHandle,
+    _pending: State<'_, PendingUpdate>,
+) -> Result<UpdateInfo, String> {
     // Mobile: Updater not supported
     Ok(UpdateInfo {
         available: false,

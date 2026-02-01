@@ -1,3 +1,7 @@
+use crate::model::trace::TracerouteSetting;
+use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
+use crate::socket::udp::{AsyncUdpSocket, UdpConfig};
+use crate::socket::SocketFamily;
 use anyhow::Result;
 use bytes::Bytes;
 use nex_packet::icmp::IcmpPacket;
@@ -7,14 +11,10 @@ use nex_packet::icmpv6::Icmpv6Type;
 use nex_packet::ip::IpNextProtocol;
 use nex_packet::ipv4::Ipv4Packet;
 use nex_packet::packet::Packet;
-use tokio_util::sync::CancellationToken;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-use crate::model::trace::TracerouteSetting;
-use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
-use crate::socket::udp::{AsyncUdpSocket, UdpConfig};
-use crate::socket::SocketFamily;
+use tokio_util::sync::CancellationToken;
 
 /// Default base target UDP port for traceroute
 const DEFAULT_BASE_TARGET_UDP_PORT: u16 = 33435;
@@ -44,7 +44,7 @@ pub async fn udp_traceroute(
     run_id: &str,
     _src_ip: IpAddr,
     setting: &TracerouteSetting,
-    token: CancellationToken
+    token: CancellationToken,
 ) -> Result<bool> {
     let dst_ip = setting.ip_addr;
     let timeout = Duration::from_millis(setting.timeout_ms);
@@ -63,10 +63,7 @@ pub async fn udp_traceroute(
         use crate::model::trace::TraceHop;
 
         if token.is_cancelled() {
-            let _ = app.emit(
-                "traceroute:cancelled",
-                run_id.to_string(),
-            );
+            let _ = app.emit("traceroute:cancelled", run_id.to_string());
             return Err(anyhow::anyhow!("cancelled"));
         }
         let mut ucfg = UdpConfig::new();

@@ -1,12 +1,13 @@
 use anyhow::Result;
-use tokio_util::sync::CancellationToken;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::io::AsyncWriteExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::model::ping::{
-    PingCancelledPayload, PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat
+    PingCancelledPayload, PingDonePayload, PingProgressPayload, PingProtocol, PingSample,
+    PingSetting, PingStat,
 };
 use crate::model::probe::{ProbeStatus, ProbeStatusKind};
 use crate::socket::tcp::{AsyncTcpSocket, TcpConfig, TcpSocketType};
@@ -36,7 +37,7 @@ pub async fn tcp_ping(
     run_id: &str,
     _src_ip: IpAddr,
     setting: PingSetting,
-    token: CancellationToken
+    token: CancellationToken,
 ) -> Result<PingStat> {
     let port = setting.port.unwrap_or(80);
     let target = SocketAddr::new(setting.ip_addr, port);
@@ -49,8 +50,8 @@ pub async fn tcp_ping(
     for seq in 1..=setting.count {
         if token.is_cancelled() {
             let _ = app.emit(
-        "ping:cancelled",
-        PingCancelledPayload {
+                "ping:cancelled",
+                PingCancelledPayload {
                     run_id: run_id.to_string(),
                 },
             );
