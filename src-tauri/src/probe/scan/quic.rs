@@ -1,13 +1,17 @@
 use anyhow::Result;
 use futures::{stream, StreamExt};
 use rand::{seq::SliceRandom, thread_rng};
+use tokio_util::sync::CancellationToken;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::model::endpoint::Endpoint;
-use crate::model::scan::{PortScanReport, PortScanSample, PortScanSetting, PortState};
+use crate::model::scan::{
+    PortScanCancelledPayload, PortScanProgressPayload, PortScanReport, PortScanSample, PortScanSetting,
+    PortState,
+};
 use crate::probe::scan::expand_ports;
 use crate::probe::scan::progress::ThrottledProgress;
 use crate::probe::scan::tuner::ports_concurrency;
@@ -18,6 +22,7 @@ pub async fn port_scan(
     run_id: &str,
     _src_ip: IpAddr,
     setting: PortScanSetting,
+    token: CancellationToken,
 ) -> Result<PortScanReport> {
     let mut ports = expand_ports(&setting.target_ports_preset, &setting.user_ports);
     if !setting.ordered {
@@ -25,6 +30,7 @@ pub async fn port_scan(
     }
 
     let app = app.clone();
+    let run_id = run_id.to_string();
     let ip = setting.ip_addr;
     let timeout = Duration::from_millis(setting.timeout_ms);
 
@@ -33,14 +39,19 @@ pub async fn port_scan(
 
     let hostname_opt = setting.hostname.clone();
 
-    // Create tasks for each port and collect results as they complete.
     let mut tasks = stream::iter(ports.into_iter())
         .map(|port| {
             let app = app.clone();
+            let run_id = run_id.clone();
             let progress = progress.clone();
+            let token = token.clone();
             let hostname_opt = hostname_opt.clone();
 
             async move {
+                if token.is_cancelled() {
+                    return None;
+                }
+
                 let family = if ip.is_ipv4() {
                     crate::socket::SocketFamily::IPV4
                 } else {
@@ -53,48 +64,73 @@ pub async fn port_scan(
                     family,
                 };
 
-                let (state, rtt_ms, msg) =
-                    match crate::socket::quic::AsyncQuicSocket::from_config(&quic_cfg) {
-                        Ok(ep) => {
-                            let server_name =
-                                hostname_opt.clone().unwrap_or_else(|| ip.to_string());
-                            let start = Instant::now();
-                            match ep
-                                .connect_timeout(&SocketAddr::new(ip, port), &server_name, timeout)
-                                .await
-                            {
-                                Ok(conn) => {
-                                    conn.close(0u32.into(), b"done");
-                                    (
-                                        PortState::Open,
-                                        Some(start.elapsed().as_millis() as u64),
-                                        None,
-                                    )
-                                }
-                                Err(e) => {
-                                    let st = if let Some(ioe) = e.downcast_ref::<std::io::Error>() {
-                                        if ioe.kind() == std::io::ErrorKind::TimedOut {
-                                            PortState::Filtered
-                                        } else {
-                                            PortState::Closed
-                                        }
-                                    } else {
-                                        PortState::Closed
-                                    };
-                                    (st, None, Some(e.to_string()))
-                                }
-                            }
+                let ep = match crate::socket::quic::AsyncQuicSocket::from_config(&quic_cfg) {
+                    Ok(ep) => ep,
+                    Err(e) => {
+                        let (done, should_emit) = progress.on_advance();
+                        if should_emit {
+                            let _ = app.emit(
+                                "portscan:progress",
+                                PortScanProgressPayload {
+                                    run_id: run_id.clone(),
+                                    done,
+                                    total,
+                                },
+                            );
                         }
-                        Err(e) => (
-                            PortState::Filtered,
+                        return Some(PortScanSample {
+                            run_id: run_id.clone(),
+                            ip_addr: ip,
+                            port,
+                            state: PortState::Filtered,
+                            rtt_ms: None,
+                            message: Some(format!("quic endpoint error: {}", e)),
+                            service_name: None,
+                            service_info: None,
+                            done,
+                            total,
+                        });
+                    }
+                };
+
+                let server_name = hostname_opt.clone().unwrap_or_else(|| ip.to_string());
+                let start = Instant::now();
+
+                let sock_addr = SocketAddr::new(ip, port);
+                let connect_res = tokio::select! {
+                    _ = token.cancelled() => {
+                        return None;
+                    }
+                    r = ep.connect_timeout(&sock_addr, &server_name, timeout) => r,
+                };
+
+                let (state, rtt_ms, msg) = match connect_res {
+                    Ok(conn) => {
+                        conn.close(0u32.into(), b"done");
+                        (
+                            PortState::Open,
+                            Some(start.elapsed().as_millis() as u64),
                             None,
-                            Some(format!("quic endpoint error: {}", e)),
-                        ),
-                    };
+                        )
+                    }
+                    Err(e) => {
+                        let st = if let Some(ioe) = e.downcast_ref::<std::io::Error>() {
+                            if ioe.kind() == std::io::ErrorKind::TimedOut {
+                                PortState::Filtered
+                            } else {
+                                PortState::Closed
+                            }
+                        } else {
+                            PortState::Closed
+                        };
+                        (st, None, Some(e.to_string()))
+                    }
+                };
 
                 let (done, should_emit) = progress.on_advance();
 
                 let sample = PortScanSample {
+                    run_id: run_id.clone(),
                     ip_addr: ip,
                     port,
                     state,
@@ -106,38 +142,66 @@ pub async fn port_scan(
                     total,
                 };
 
-                // Open port: emit detailed info
                 if sample.state == PortState::Open {
                     let _ = app.emit("portscan:open", sample.clone());
                 }
 
-                // Progress event
                 if should_emit {
-                    let _ = app.emit("portscan:progress", (done, total));
+                    let _ = app.emit(
+                        "portscan:progress",
+                        PortScanProgressPayload {
+                            run_id: run_id.clone(),
+                            done,
+                            total,
+                        },
+                    );
                 }
 
-                sample
+                Some(sample)
             }
         })
         .buffer_unordered(ports_concurrency());
 
-    // Collect only Open samples
-    let mut open_samples: Vec<PortScanSample> = Vec::new();
-    let udp_service_db = ndb_udp_service::UdpServiceDb::bundled();
-    while let Some(mut sample) = tasks.next().await {
-        if sample.state == PortState::Open {
-            sample.service_name = udp_service_db
-                .get(sample.port)
-                .map(|entry| entry.name.clone());
-            open_samples.push(sample);
+    let mut open_samples = Vec::new();
+    let udp_db = ndb_udp_service::UdpServiceDb::bundled();
+    let mut cancelled = false;
+
+    loop {
+        let sample = tokio::select! {
+            _ = token.cancelled() => {
+                cancelled = true;
+                break;
+            }
+            s = tasks.next() => s,
+        };
+
+        let Some(sample) = sample else {
+            break;
+        };
+
+        if let Some(mut sample) = sample {
+            if sample.state == PortState::Open {
+                if let Some(entry) = udp_db.get(sample.port) {
+                    sample.service_name = Some(entry.name.clone());
+                }
+                open_samples.push(sample);
+            }
         }
     }
 
-    open_samples.sort_by_key(|s| s.port);
+    if cancelled || token.is_cancelled() {
+        let _ = app.emit(
+            "portscan:cancelled",
+            PortScanCancelledPayload { run_id: run_id.clone() },
+        );
+        return Err(anyhow::anyhow!("cancelled"));
+    }
 
-    // Service detection
-    if setting.service_detection && !open_samples.is_empty() {
-        let _ = app.emit("portscan:service_detection_start", run_id.to_string());
+    open_samples.sort_by_key(|s| s.port);
+    
+    if setting.service_detection && !open_samples.is_empty() && !token.is_cancelled() {
+        let _ = app.emit("portscan:service_detection_start", run_id.clone());
+
         let service_probe_setting = ServiceProbeConfig {
             timeout: Duration::from_secs(2),
             max_concurrency: 100,
@@ -146,30 +210,46 @@ pub async fn port_scan(
             skip_cert_verify: true,
         };
         let detector = ServiceDetector::new(service_probe_setting);
+
         let mut endpoint = Endpoint::new(ip);
         endpoint.hostname = setting.hostname.clone();
-        for sample in &open_samples {
+        for s in &open_samples {
             endpoint.upsert_port(crate::model::endpoint::Port {
-                number: sample.port,
+                number: s.port,
                 transport: crate::model::endpoint::TransportProtocol::Quic,
             });
         }
-        let active_endpoints: Vec<Endpoint> = vec![endpoint];
-        let service_result = detector.run_service_detection(active_endpoints).await?;
-        for sample in &mut open_samples {
-            if let Some(res) = service_result
-                .results
-                .iter()
-                .find(|r| r.port == sample.port)
-            {
-                sample.service_info = Some(res.service_info.clone());
+        let active_endpoints = vec![endpoint];
+
+        let mut service_cancelled = false;
+        let service_result = tokio::select! {
+            _ = token.cancelled() => {
+                service_cancelled = true;
+                None
             }
+            r = detector.run_service_detection(active_endpoints) => Some(r?),
+        };
+
+        if service_cancelled || token.is_cancelled() {
+            let _ = app.emit(
+                "portscan:cancelled",
+                PortScanCancelledPayload { run_id: run_id.clone() },
+            );
+            return Err(anyhow::anyhow!("cancelled"));
         }
-        let _ = app.emit("portscan:service_detection_done", run_id.to_string());
+
+        if let Some(service_result) = service_result {
+            for sample in &mut open_samples {
+                if let Some(res) = service_result.results.iter().find(|r| r.port == sample.port) {
+                    sample.service_info = Some(res.service_info.clone());
+                }
+            }
+            let _ = app.emit("portscan:service_detection_done", run_id.clone());
+        }
     }
 
     let report = PortScanReport {
-        run_id: run_id.to_string(),
+        run_id: run_id.clone(),
         ip_addr: setting.ip_addr,
         hostname: setting.hostname.clone(),
         protocol: setting.protocol,

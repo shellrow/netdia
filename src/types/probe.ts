@@ -73,7 +73,14 @@ export interface ServiceInfo {
   tls_info?: TlsInfo | null;
 }
 
+export interface PortScanProgress {
+  run_id: string;
+  done: number;
+  total: number;
+}
+
 export interface PortScanSample {
+  run_id: string;
   ip_addr: string;
   port: number;
   state: PortState;
@@ -106,7 +113,27 @@ export interface PortScanSetting {
 
 export type HostState = "Alive" | "Unreachable";
 
+export interface HostScanStartPayload {
+  run_id: string;
+}
+
+export interface HostScanErrorPayload {
+  run_id: string;
+  message: string;
+}
+
+export interface HostScanCancelledPayload {
+  run_id: string;
+}
+
+export interface HostScanProgressPayload {
+  run_id: string;
+  done: number;
+  total: number;
+}
+
 export interface HostScanProgress {
+  run_id: string;
   ip_addr: string;
   state: HostState;
   rtt_ms?: number | null;
@@ -130,6 +157,19 @@ export interface HostScanRequest {
   payload?: string | null;
   ordered: boolean;
   concurrency?: number | null;
+}
+
+export interface NeighborScanStartPayload {
+  run_id: string;
+}
+
+export interface NeighborScanCancelledPayload {
+  run_id: string;
+}
+
+export interface NeighborScanErrorPayload {
+  run_id: string;
+  message: string;
 }
 
 export type NeighborHost = {

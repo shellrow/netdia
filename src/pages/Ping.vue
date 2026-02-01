@@ -21,7 +21,7 @@ const form = reactive({
 
 const running = ref(false);
 const opId = ref<string | null>(null);
-const loading = ref(false);
+const canceling = ref(false);
 const err = ref<string | null>(null);
 
 const samples = ref<PingSample[]>([]);
@@ -60,8 +60,8 @@ async function toPingSetting(): Promise<PingSetting> {
 
 async function startPing() {
   resetResult();
+  canceling.value = false;
   running.value = true;
-  loading.value = true;
 
   try {
     const setting = await toPingSetting();
@@ -69,14 +69,25 @@ async function startPing() {
   } catch (e: any) {
     err.value = String(e?.message ?? e);
     running.value = false;
-  } finally {
-    loading.value = false;
+  }
+}
+
+async function cancelPing() {
+  if (!running.value) return;
+  canceling.value = true;
+  try {
+    await invoke('cancel_ping');
+  } catch (e: any) {
+    err.value = String(e?.message ?? e);
+    canceling.value = false;
   }
 }
 
 let unlistenStart: UnlistenFn | null = null;
 let unlistenProgress: UnlistenFn | null = null;
 let unlistenDone: UnlistenFn | null = null;
+let unlistenError: UnlistenFn | null = null;
+let unlistenCancelled: UnlistenFn | null = null;
 
 onMounted(async () => {
   await nextTick();
@@ -106,12 +117,30 @@ onMounted(async () => {
     if (s) stat.value = s;
     running.value = false;
   });
+
+  unlistenError = await listen("ping:error", (ev:any) => {
+    const p = ev?.payload ?? {};
+    if (p.message) {
+      err.value = String(p.message);
+    }
+    running.value = false;
+    canceling.value = false;
+  });
+
+  unlistenCancelled = await listen("ping:cancelled", (ev: any) => {
+    if (ev.payload?.run_id === opId.value) {
+      running.value = false;
+      canceling.value = false;
+    }
+  });
 });
 
 onBeforeUnmount(() => {
   unlistenStart?.();
   unlistenProgress?.();
   unlistenDone?.();
+  unlistenError?.();
+  unlistenCancelled?.();
 });
 
 const sentCount = computed(() => samples.value.length);
@@ -229,10 +258,19 @@ const lossRate = computed(() => {
           label="Start"
           icon="pi pi-play"
           :disabled="running || !form.host?.trim()"
-          :loading="loading"
+          :loading="running && !canceling"
           @click="startPing"
           aria-label="Start ping"
           size="small"
+        />
+        <Button
+          :disabled="!running"
+          :loading="canceling"
+          label="Cancel"
+          icon="pi pi-stop"
+          severity="secondary"
+          size="small"
+          @click="cancelPing"
         />
       </div>
     </div>

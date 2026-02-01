@@ -4,10 +4,11 @@ use netdev::Interface;
 use tauri::{AppHandle, Emitter};
 
 use crate::model::scan::{
-    HostScanReport, HostScanRequest, HostScanSetting, NeighborScanReport, PortScanProtocol,
+    HostScanReport, HostScanRequest, HostScanSetting, PortScanProtocol,
     PortScanReport, PortScanSetting, TargetPortsPreset,
 };
 
+use crate::operation::{OP_HOSTSCAN, OP_NEIGHBORSCAN, OP_PORTSCAN};
 use crate::probe::service::db::service::{
     init_port_probe_db, init_response_signatures_db, init_service_probe_db, init_tcp_service_db,
     init_udp_service_db, PORT_PROBE_DB, RESPONSE_SIGNATURES_DB, SERVICE_PROBE_DB, TCP_SERVICE_DB,
@@ -71,6 +72,7 @@ pub async fn port_scan(app: AppHandle, setting: PortScanSetting) -> Result<PortS
         }
     };
     let run_id = uuid::Uuid::new_v4().to_string();
+    let token = crate::operation::start_op(OP_PORTSCAN);
     // Start event
     let _ = app.emit(
         "portscan:start",
@@ -80,15 +82,20 @@ pub async fn port_scan(app: AppHandle, setting: PortScanSetting) -> Result<PortS
     );
 
     match setting.protocol {
-        PortScanProtocol::Tcp => crate::probe::scan::tcp::port_scan(&app, &run_id, src_ip, setting)
+        PortScanProtocol::Tcp => crate::probe::scan::tcp::port_scan(&app, &run_id, src_ip, setting, token)
             .await
             .map_err(|e| e.to_string()),
         PortScanProtocol::Quic => {
-            crate::probe::scan::quic::port_scan(&app, &run_id, src_ip, setting)
+            crate::probe::scan::quic::port_scan(&app, &run_id, src_ip, setting, token)
                 .await
                 .map_err(|e| e.to_string())
         }
     }
+}
+
+#[tauri::command]
+pub async fn cancel_portscan() -> bool {
+    crate::operation::cancel_op(OP_PORTSCAN)
 }
 
 #[tauri::command]
@@ -109,24 +116,29 @@ pub async fn host_scan(app: AppHandle, setting: HostScanRequest) -> Result<HostS
         .next()
         .map(std::net::IpAddr::V6);
 
+    let token = crate::operation::start_op(OP_HOSTSCAN);
+
     let _ = app.emit(
         "hostscan:start",
         crate::model::scan::HostScanStartPayload {
             run_id: run_id.clone(),
         },
     );
-    crate::probe::scan::icmp::host_scan(&app, &run_id, src_ipv4_opt, src_ipv6_opt, scan_setting)
+    crate::probe::scan::icmp::host_scan(&app, &run_id, src_ipv4_opt, src_ipv6_opt, scan_setting, token)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn neighbor_scan(
-    app: AppHandle,
-    iface_name: Option<String>,
-) -> Result<NeighborScanReport, String> {
+pub async fn cancel_hostscan() -> bool {
+    crate::operation::cancel_op(OP_HOSTSCAN)
+}
+
+#[tauri::command]
+pub async fn neighbor_scan(app: AppHandle, iface_name: Option<String>) -> Result<(), String> {
     let run_id = uuid::Uuid::new_v4().to_string();
-    let _ = app.emit("neighborscan:start", run_id.clone());
+    let token = crate::operation::start_op(OP_NEIGHBORSCAN);
+
     let iface = if let Some(name) = iface_name {
         netdev::get_interfaces()
             .into_iter()
@@ -135,9 +147,16 @@ pub async fn neighbor_scan(
     } else {
         netdev::get_default_interface().map_err(|e| e.to_string())?
     };
-    crate::probe::scan::neigh::neighbor_scan(&app, &run_id, iface)
+
+    crate::probe::scan::neigh::neighbor_scan(&app, &run_id, iface, token)
         .await
+        .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_neighborscan() -> bool {
+    crate::operation::cancel_op(OP_NEIGHBORSCAN)
 }
 
 #[tauri::command]

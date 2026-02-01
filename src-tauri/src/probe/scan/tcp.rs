@@ -1,13 +1,14 @@
 use anyhow::Result;
 use futures::{stream, StreamExt};
 use rand::{seq::SliceRandom, thread_rng};
+use tokio_util::sync::CancellationToken;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::model::endpoint::Endpoint;
-use crate::model::scan::{PortScanReport, PortScanSample, PortScanSetting, PortState};
+use crate::model::scan::{PortScanCancelledPayload, PortScanProgressPayload, PortScanReport, PortScanSample, PortScanSetting, PortState};
 use crate::probe::scan::expand_ports;
 use crate::probe::scan::progress::ThrottledProgress;
 use crate::probe::scan::tuner::ports_concurrency;
@@ -18,6 +19,7 @@ pub async fn port_scan(
     run_id: &str,
     _src_ip: IpAddr,
     setting: PortScanSetting,
+    token: CancellationToken
 ) -> Result<PortScanReport> {
     let mut ports = expand_ports(&setting.target_ports_preset, &setting.user_ports);
     if !setting.ordered {
@@ -36,7 +38,11 @@ pub async fn port_scan(
         .map(|port| {
             let app = app.clone();
             let progress = progress.clone();
+            let token = token.clone();
             async move {
+                if token.is_cancelled() {
+                    return None;
+                }
                 let cfg = if ip.is_ipv4() {
                     crate::socket::tcp::TcpConfig::v4_stream()
                 } else {
@@ -50,10 +56,15 @@ pub async fn port_scan(
                         let (done, should_emit) = progress.on_advance();
 
                         if should_emit {
-                            let _ = app.emit("portscan:progress", (done, total));
+                            let _ = app.emit("portscan:progress", PortScanProgressPayload {
+                                run_id: run_id.to_string(),
+                                done,
+                                total,
+                            });
                         }
 
-                        return PortScanSample {
+                        return Some(PortScanSample {
+                            run_id: run_id.to_string(),
                             ip_addr: ip,
                             port,
                             state: PortState::Filtered,
@@ -63,13 +74,20 @@ pub async fn port_scan(
                             service_info: None,
                             done,
                             total,
-                        };
+                        });
                     }
                 };
 
                 let start = Instant::now();
 
-                let (state, rtt_ms, msg) = match sock.connect_timeout(sock_addr, timeout).await {
+                let connect_res = tokio::select! {
+                    _ = token.cancelled() => {
+                        return None;
+                    }
+                    r = sock.connect_timeout(sock_addr, timeout) => r,
+                };
+
+                let (state, rtt_ms, msg) = match connect_res {
                     Ok(stream) => {
                         drop(stream);
                         (
@@ -97,6 +115,7 @@ pub async fn port_scan(
                 let (done, should_emit) = progress.on_advance();
 
                 let sample = PortScanSample {
+                    run_id: run_id.to_string(),
                     ip_addr: ip,
                     port,
                     state,
@@ -115,10 +134,14 @@ pub async fn port_scan(
 
                 // Progress event
                 if should_emit {
-                    let _ = app.emit("portscan:progress", (done, total));
+                    let _ = app.emit("portscan:progress", PortScanProgressPayload {
+                        run_id: run_id.to_string(),
+                        done,
+                        total,
+                    });
                 }
 
-                sample
+                Some(sample)
             }
         })
         .buffer_unordered(ports_concurrency());
@@ -126,21 +149,40 @@ pub async fn port_scan(
     // Collect Open results only
     let mut open_samples = Vec::new();
     let tcp_db = ndb_tcp_service::TcpServiceDb::bundled();
-
-    while let Some(mut sample) = tasks.next().await {
-        if sample.state == PortState::Open {
-            if let Some(entry) = tcp_db.get(sample.port) {
-                sample.service_name = Some(entry.name.clone());
+    let mut cancelled = false;
+    loop {
+        let sample = tokio::select! {
+            _ = token.cancelled() => {
+                cancelled = true;
+                break;
             }
-            open_samples.push(sample);
+            s = tasks.next() => s,
+        };
+
+        let Some(sample) = sample else {
+            break;
+        };
+
+        if let Some(mut sample) = sample {
+            if sample.state == PortState::Open {
+                if let Some(entry) = tcp_db.get(sample.port) {
+                    sample.service_name = Some(entry.name.clone());
+                }
+                open_samples.push(sample);
+            }
         }
+    }
+
+    if cancelled || token.is_cancelled() {
+        let _ = app.emit("portscan:cancelled", PortScanCancelledPayload{ run_id: run_id.to_string() });
+        return Err(anyhow::anyhow!("cancelled"));
     }
 
     // Sort by port
     open_samples.sort_by_key(|s| s.port);
 
     // Service detection
-    if setting.service_detection && !open_samples.is_empty() {
+    if setting.service_detection && !open_samples.is_empty() && !token.is_cancelled() {
         let _ = app.emit("portscan:service_detection_start", run_id.to_string());
         let service_probe_setting = ServiceProbeConfig {
             timeout: Duration::from_secs(2),
@@ -159,17 +201,30 @@ pub async fn port_scan(
             });
         }
         let active_endpoints: Vec<Endpoint> = vec![endpoint];
-        let service_result = detector.run_service_detection(active_endpoints).await?;
-        for sample in &mut open_samples {
-            if let Some(res) = service_result
-                .results
-                .iter()
-                .find(|r| r.port == sample.port)
-            {
-                sample.service_info = Some(res.service_info.clone());
+        let mut service_cancelled = false;
+        let service_result = tokio::select! {
+            _ = token.cancelled() => {
+                service_cancelled = true;
+                None
             }
+            r = detector.run_service_detection(active_endpoints) => Some(r?),
+        };
+
+        if service_cancelled || token.is_cancelled() {
+            let _ = app.emit("portscan:cancelled", PortScanCancelledPayload{ run_id: run_id.to_string() });
+            return Err(anyhow::anyhow!("cancelled"));
+        } else if let Some(service_result) = service_result {
+            for sample in &mut open_samples {
+                if let Some(res) = service_result
+                    .results
+                    .iter()
+                    .find(|r| r.port == sample.port)
+                {
+                    sample.service_info = Some(res.service_info.clone());
+                }
+            }
+            let _ = app.emit("portscan:service_detection_done", run_id.to_string());
         }
-        let _ = app.emit("portscan:service_detection_done", run_id.to_string());
     }
 
     let report = PortScanReport {

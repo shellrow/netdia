@@ -9,11 +9,13 @@ use nex_packet::icmpv6::Icmpv6Type;
 use nex_packet::ip::IpNextProtocol;
 use nex_packet::ipv4::Ipv4Packet;
 use nex_packet::packet::Packet;
+#[cfg(unix)]
+use tokio_util::sync::CancellationToken;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-
-use super::{TraceHop, TracerouteSetting};
+#[cfg(unix)]
+use crate::model::trace::{TracerouteSetting, TraceCancelledPayload};
 use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
 use crate::socket::udp::{AsyncUdpSocket, UdpConfig};
 use crate::socket::SocketFamily;
@@ -44,8 +46,10 @@ fn is_port_unreach_v6(icmp_bytes: &[u8]) -> bool {
 #[cfg(unix)]
 pub async fn udp_traceroute(
     app: &AppHandle,
+    run_id: &str,
     _src_ip: IpAddr,
     setting: &TracerouteSetting,
+    token: CancellationToken
 ) -> Result<bool> {
     let dst_ip = setting.ip_addr;
     let timeout = Duration::from_millis(setting.timeout_ms);
@@ -61,6 +65,15 @@ pub async fn udp_traceroute(
     let mut reached = false;
 
     'ttl_loop: for ttl in 1..=setting.max_hops {
+        use crate::model::trace::TraceHop;
+
+        if token.is_cancelled() {
+            let _ = app.emit(
+                "traceroute:cancelled",
+                run_id.to_string(),
+            );
+            return Err(anyhow::anyhow!("cancelled"));
+        }
         let mut ucfg = UdpConfig::new();
         ucfg.socket_family = SocketFamily::from_ip(&dst_ip);
 
@@ -143,6 +156,18 @@ pub async fn udp_traceroute(
         }
 
         app.emit("traceroute:progress", &best).ok();
+
+        if token.is_cancelled() {
+            use crate::model::trace::TraceCancelledPayload;
+
+            let _ = app.emit(
+                "traceroute:cancelled",
+                TraceCancelledPayload {
+                    run_id: run_id.to_string(),
+                },
+            );
+            return Err(anyhow::anyhow!("cancelled"));
+        }
     }
 
     Ok(reached)
@@ -151,8 +176,10 @@ pub async fn udp_traceroute(
 #[cfg(windows)]
 pub async fn udp_traceroute(
     _app: &AppHandle,
+    _run_id: &str,
     _src_ip: IpAddr,
     _setting: &TracerouteSetting,
+    _token: CancellationToken
 ) -> Result<bool> {
     // Currently, windows is not supported for UDP traceroute via ICMP Port Unreachable
     // because it requires enabling promiscuous mode on ICMP socket.

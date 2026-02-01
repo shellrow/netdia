@@ -7,6 +7,7 @@ pub mod ping;
 pub mod probe;
 pub mod scan;
 pub mod speedtest;
+pub mod trace;
 
 use serde::{Deserialize, Serialize};
 

@@ -2,15 +2,25 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
+import DataTable from "primevue/datatable";
+import Column from "primevue/column";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
-import { HostScanProgress, NeighborScanReport } from "../types/probe";
+import {
+  HostScanProgress,
+  HostScanProgressPayload,
+  NeighborScanReport,
+  NeighborScanStartPayload,
+  NeighborScanCancelledPayload,
+  NeighborScanErrorPayload,
+} from "../types/probe";
 import { Ipv4Net } from "../types/net";
 import { fmtMs } from "../utils/formatter";
 
+const activeRunId = ref<string | null>(null);
 const running = ref(false);
 const loading = ref(false);
+const canceling = ref(false);
+const cancelled = ref(false);
 const err = ref<string | null>(null);
 
 const report = ref<NeighborScanReport | null>(null);
@@ -32,11 +42,8 @@ const selectedIf = ref<string | null>(null);
 const ifOptions = computed(() =>
   Object.entries(netMap.value).map(([name, net]) => {
     let cidr = "-";
-    if (typeof net === "string") {
-      cidr = net;
-    } else if (net && typeof net === "object") {
-      cidr = `${net.addr}/${net.prefix_len}`;
-    }
+    if (typeof net === "string") cidr = net;
+    else if (net && typeof net === "object") cidr = `${net.addr}/${net.prefix_len}`;
     return { label: `${name}  ${cidr}`, value: name };
   }),
 );
@@ -55,6 +62,8 @@ function resetAll() {
   progressDone.value = 0;
   progressTotal.value = 0;
   foundAlive.value = 0;
+  cancelled.value = false;
+  activeRunId.value = null;
 }
 
 const progressPct = computed(() => {
@@ -65,11 +74,6 @@ const progressPct = computed(() => {
 });
 
 const neighborCount = computed(() => report.value?.neighbors?.length ?? 0);
-
-let unlistenHostProgress: UnlistenFn | null = null;
-let unlistenHostAlive: UnlistenFn | null = null;
-let unlistenNeighborStart: UnlistenFn | null = null;
-let unlistenNeighborDone: UnlistenFn | null = null;
 
 async function fetchNetworkAddressMap() {
   try {
@@ -88,44 +92,89 @@ async function startScan() {
   loading.value = true;
 
   try {
-    const rep = await invoke<NeighborScanReport>("neighbor_scan", {
-      ifaceName: selectedIf.value ?? null,
-    });
-    report.value = rep;
+    await invoke("neighbor_scan", { ifaceName: selectedIf.value ?? null });
+  } catch (e: any) {
+    err.value = String(e?.message ?? e);
+    running.value = false;
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function cancelScan() {
+  canceling.value = true;
+  try {
+    await invoke("cancel_neighborscan");
   } catch (e: any) {
     err.value = String(e?.message ?? e);
   } finally {
-    loading.value = false;
-    running.value = false;
+    canceling.value = false;
   }
 }
+
+let unlistenHostProgress: UnlistenFn | null = null;
+let unlistenHostAlive: UnlistenFn | null = null;
+let unlistenNeighborStart: UnlistenFn | null = null;
+let unlistenNeighborDone: UnlistenFn | null = null;
+let unlistenNeighborCancelled: UnlistenFn | null = null;
+let unlistenNeighborError: UnlistenFn | null = null;
 
 onMounted(async () => {
   await nextTick();
 
-  // Lightweight progress: (done, total)
-  unlistenHostProgress = await listen("hostscan:progress", (ev: any) => {
-    const payload = ev?.payload;
-    if (!payload) return;
-    const [done, total] = payload as [number, number];
-    progressDone.value = done;
-    progressTotal.value = total;
+  unlistenNeighborStart = await listen<NeighborScanStartPayload>("neighborscan:start", (ev) => {
+    const runId = ev?.payload?.run_id;
+    if (runId) activeRunId.value = runId;
+    running.value = true;
+    err.value = null;
+    cancelled.value = false;
+    progressDone.value = 0;
+    progressTotal.value = 0;
+    foundAlive.value = 0;
   });
 
-  // Alive only (count-up)
-  unlistenHostAlive = await listen<HostScanProgress>("hostscan:alive", (ev) => {
-    const p = ev.payload;
+  unlistenHostProgress = await listen<HostScanProgressPayload>("hostscan:progress", (ev) => {
+    const p = ev?.payload;
     if (!p) return;
+    if (activeRunId.value && p.run_id && p.run_id !== activeRunId.value) return;
+    progressDone.value = p.done;
+    progressTotal.value = p.total;
+  });
+  
+  unlistenHostAlive = await listen<HostScanProgress>("hostscan:alive", (ev) => {
+    const p = ev?.payload;
+    if (!p) return;
+    if (activeRunId.value && p.run_id && p.run_id !== activeRunId.value) return;
     foundAlive.value += 1;
   });
 
-  unlistenNeighborStart = await listen<string>("neighborscan:start", () => {
-    running.value = true;
-    err.value = null;
+  unlistenNeighborDone = await listen<NeighborScanReport>("neighborscan:done", (ev) => {
+    const rep = ev?.payload;
+    if (!rep) return;
+    if (activeRunId.value && rep.run_id && rep.run_id !== activeRunId.value) return;
+    report.value = rep;
+    running.value = false;
+    canceling.value = false;
   });
 
-  unlistenNeighborDone = await listen<string>("neighborscan:done", () => {
+  unlistenNeighborCancelled = await listen<NeighborScanCancelledPayload>("neighborscan:cancelled", (ev) => {
+    const p = ev?.payload;
+    const runId = p?.run_id;
+    if (activeRunId.value && runId && runId !== activeRunId.value) return;
+    cancelled.value = true;
     running.value = false;
+    canceling.value = false;
+    loading.value = false;
+  });
+
+  unlistenNeighborError = await listen<NeighborScanErrorPayload>("neighborscan:error", (ev) => {
+    const p = ev?.payload;
+    const runId = p?.run_id;
+    if (activeRunId.value && runId && runId !== activeRunId.value) return;
+    err.value = String(p?.message ?? "neighborscan error");
+    running.value = false;
+    canceling.value = false;
+    loading.value = false;
   });
 
   await fetchNetworkAddressMap();
@@ -136,12 +185,13 @@ onBeforeUnmount(() => {
   unlistenHostAlive?.();
   unlistenNeighborStart?.();
   unlistenNeighborDone?.();
+  unlistenNeighborCancelled?.();
+  unlistenNeighborError?.();
 });
 </script>
 
 <template>
   <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
-    <!-- Toolbar -->
     <div ref="toolbarRef" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-start gap-3">
       <div class="flex items-center gap-3 min-w-0 flex-wrap">
         <div class="text-surface-500 dark:text-surface-400 text-sm">Neighbor Scan</div>
@@ -169,13 +219,21 @@ onBeforeUnmount(() => {
           @click="startScan"
           size="small"
         />
+        <Button
+          label="Cancel"
+          icon="pi pi-stop"
+          severity="secondary"
+          :disabled="!running"
+          :loading="canceling"
+          @click="cancelScan"
+          size="small"
+        />
       </div>
     </div>
 
     <div class="flex-1 min-h-0">
       <ScrollPanel :style="{ width: '100%', height: panelHeight }" class="flex-1 min-h-0">
         <div class="grid grid-cols-1 gap-3">
-          <!-- Progress -->
           <Card>
             <template #title>Progress</template>
             <template #content>
@@ -185,13 +243,12 @@ onBeforeUnmount(() => {
               </div>
               <ProgressBar :value="progressPct" />
               <div class="mt-2 text-xs text-surface-500">
-                Alive hosts found:
-                <span class="font-mono">{{ foundAlive }}</span>
+                Alive hosts found: <span class="font-mono">{{ foundAlive }}</span>
+                <span v-if="cancelled" class="ml-2 text-orange-500">(cancelled)</span>
               </div>
             </template>
           </Card>
 
-          <!-- Result -->
           <Card>
             <template #title>Neighbors</template>
             <template #content>

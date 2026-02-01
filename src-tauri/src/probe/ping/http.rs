@@ -1,10 +1,11 @@
 use anyhow::Result;
 use reqwest::Client;
+use tokio_util::sync::CancellationToken;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::model::ping::{
-    PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat,
+    PingCancelledPayload, PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat
 };
 use crate::model::probe::{ProbeStatus, ProbeStatusKind};
 use crate::probe::DEFAULT_USER_AGENT_CHROME;
@@ -32,7 +33,7 @@ fn summarize_rtts(rtts_ms: &[u64]) -> (Option<u64>, Option<u64>, Option<u64>) {
     )
 }
 
-pub async fn http_ping(app: &AppHandle, run_id: &str, setting: PingSetting) -> Result<PingStat> {
+pub async fn http_ping(app: &AppHandle, run_id: &str, setting: PingSetting, token: CancellationToken) -> Result<PingStat> {
     // Build HTTP client
     let per_req_to = Duration::from_millis(setting.timeout_ms);
     let client = Client::builder()
@@ -69,6 +70,15 @@ pub async fn http_ping(app: &AppHandle, run_id: &str, setting: PingSetting) -> R
     let mut received = 0u32;
 
     for seq in 1..=setting.count {
+        if token.is_cancelled() {
+            let _ = app.emit(
+        "ping:cancelled",
+        PingCancelledPayload {
+                    run_id: run_id.to_string(),
+                },
+            );
+            return Err(anyhow::anyhow!("cancelled"));
+        }
         let mut status = ProbeStatus::new();
         let mut rtt_ms: Option<u64> = None;
 
@@ -126,7 +136,18 @@ pub async fn http_ping(app: &AppHandle, run_id: &str, setting: PingSetting) -> R
         samples.push(sample);
 
         if seq != setting.count {
-            tokio::time::sleep(Duration::from_millis(setting.send_rate_ms)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(setting.send_rate_ms)) => {}
+                _ = token.cancelled() => {
+                    let _ = app.emit(
+                        "ping:cancelled",
+                        PingCancelledPayload {
+                            run_id: run_id.to_string(),
+                        },
+                    );
+                    return Err(anyhow::anyhow!("cancelled"));
+                }
+            }
         }
     }
 

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use tokio_util::sync::CancellationToken;
 use std::{
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
@@ -6,7 +7,7 @@ use std::{
 use tauri::{AppHandle, Emitter};
 
 use crate::model::ping::{
-    PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat,
+    PingCancelledPayload, PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat
 };
 use crate::model::probe::{ProbeStatus, ProbeStatusKind};
 use crate::socket::quic::{AsyncQuicSocket, QuicConfig};
@@ -37,6 +38,7 @@ pub async fn quic_ping(
     run_id: &str,
     _src_ip: IpAddr,
     setting: PingSetting,
+    token: CancellationToken
 ) -> Result<PingStat> {
     let family = match setting.ip_addr {
         IpAddr::V4(_) => SocketFamily::IPV4,
@@ -62,6 +64,15 @@ pub async fn quic_ping(
     let mut received = 0u32;
 
     for seq in 1..=setting.count {
+        if token.is_cancelled() {
+            let _ = app.emit(
+        "ping:cancelled",
+        PingCancelledPayload {
+                    run_id: run_id.to_string(),
+                },
+            );
+            return Err(anyhow::anyhow!("cancelled"));
+        }
         let sock = AsyncQuicSocket::from_config(&cfg)?;
         let begin = Instant::now();
         let mut status = ProbeStatus::new();
@@ -121,7 +132,18 @@ pub async fn quic_ping(
         samples.push(sample);
 
         if seq != setting.count {
-            tokio::time::sleep(Duration::from_millis(setting.send_rate_ms)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(setting.send_rate_ms)) => {}
+                _ = token.cancelled() => {
+                    let _ = app.emit(
+                        "ping:cancelled",
+                        PingCancelledPayload {
+                            run_id: run_id.to_string(),
+                        },
+                    );
+                    return Err(anyhow::anyhow!("cancelled"));
+                }
+            }
         }
     }
 

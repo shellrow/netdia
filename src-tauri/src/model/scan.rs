@@ -34,8 +34,27 @@ pub struct PortScanStartPayload {
     pub run_id: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PortScanErrorPayload {
+    pub run_id: String,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PortScanCancelledPayload {
+    pub run_id: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PortScanProgressPayload {
+    pub run_id: String,
+    pub done: u32,
+    pub total: u32,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PortScanSample {
+    pub run_id: String,
     pub ip_addr: IpAddr,
     pub port: u16,
     pub state: PortState,
@@ -191,8 +210,43 @@ pub struct HostScanStartPayload {
     pub run_id: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HostScanErrorPayload {
+    pub run_id: String,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HostScanCancelledPayload {
+    pub run_id: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HostScanProgressPayload {
+    pub run_id: String,
+    pub done: u32,
+    pub total: u32,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct NeighborScanStartPayload {
+    pub run_id: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct NeighborScanCancelledPayload {
+    pub run_id: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct NeighborScanErrorPayload {
+    pub run_id: String,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HostScanProgress {
+    pub run_id: String,
     pub ip_addr: IpAddr,
     pub state: HostState,
     pub rtt_ms: Option<u64>,
