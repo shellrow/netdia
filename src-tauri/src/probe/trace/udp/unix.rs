@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-use crate::model::trace::{TracerouteSetting, TraceCancelledPayload};
+use crate::model::trace::TracerouteSetting;
 use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
 use crate::socket::udp::{AsyncUdpSocket, UdpConfig};
 use crate::socket::SocketFamily;
