@@ -4,9 +4,9 @@ use anyhow::Result;
 use netdev::Interface;
 use tauri::{AppHandle, Emitter};
 
+use crate::model::trace::{TraceErrorPayload, TraceProtocol, TraceStartPayload, TracerouteSetting};
 use crate::operation::OP_TRACEROUTE;
 use crate::probe::trace;
-use crate::model::trace::{TraceErrorPayload, TraceProtocol, TraceStartPayload, TracerouteSetting};
 
 fn sanitize_setting(mut setting: TracerouteSetting) -> TracerouteSetting {
     if setting.max_hops == 0 {
@@ -59,8 +59,12 @@ pub async fn traceroute(app: AppHandle, setting: TracerouteSetting) -> Result<()
 
     tauri::async_runtime::spawn(async move {
         let res = match setting.protocol {
-            TraceProtocol::Icmp => trace::icmp::icmp_traceroute(&app, &run_id, src_ip, &setting, token).await,
-            TraceProtocol::Udp => trace::udp::udp_traceroute(&app, &run_id, src_ip, &setting, token).await,
+            TraceProtocol::Icmp => {
+                trace::icmp::icmp_traceroute(&app, &run_id, src_ip, &setting, token).await
+            }
+            TraceProtocol::Udp => {
+                trace::udp::udp_traceroute(&app, &run_id, src_ip, &setting, token).await
+            }
         };
 
         match res {

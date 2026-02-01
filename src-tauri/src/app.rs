@@ -77,8 +77,7 @@ pub fn run() {
 
                 let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
                 let hide_item = MenuItem::with_id(app, "hide", "Hide Window", true, None::<&str>)?;
-                let quit_item =
-                    MenuItem::with_id(app, "quit", "Quit NetDia", true, None::<&str>)?;
+                let quit_item = MenuItem::with_id(app, "quit", "Quit NetDia", true, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
                 let _tray = TrayIconBuilder::with_id("tray")
                     .icon(tray_icon)

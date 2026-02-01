@@ -1,13 +1,14 @@
 use anyhow::Result;
-use tokio_util::sync::CancellationToken;
 use std::{
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
 };
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 
 use crate::model::ping::{
-    PingCancelledPayload, PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat
+    PingCancelledPayload, PingDonePayload, PingProgressPayload, PingProtocol, PingSample,
+    PingSetting, PingStat,
 };
 use crate::model::probe::{ProbeStatus, ProbeStatusKind};
 use crate::socket::quic::{AsyncQuicSocket, QuicConfig};
@@ -38,7 +39,7 @@ pub async fn quic_ping(
     run_id: &str,
     _src_ip: IpAddr,
     setting: PingSetting,
-    token: CancellationToken
+    token: CancellationToken,
 ) -> Result<PingStat> {
     let family = match setting.ip_addr {
         IpAddr::V4(_) => SocketFamily::IPV4,
@@ -66,8 +67,8 @@ pub async fn quic_ping(
     for seq in 1..=setting.count {
         if token.is_cancelled() {
             let _ = app.emit(
-        "ping:cancelled",
-        PingCancelledPayload {
+                "ping:cancelled",
+                PingCancelledPayload {
                     run_id: run_id.to_string(),
                 },
             );

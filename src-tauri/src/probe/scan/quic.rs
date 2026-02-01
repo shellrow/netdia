@@ -1,16 +1,16 @@
 use anyhow::Result;
 use futures::{stream, StreamExt};
 use rand::{seq::SliceRandom, thread_rng};
-use tokio_util::sync::CancellationToken;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 
 use crate::model::endpoint::Endpoint;
 use crate::model::scan::{
-    PortScanCancelledPayload, PortScanProgressPayload, PortScanReport, PortScanSample, PortScanSetting,
-    PortState,
+    PortScanCancelledPayload, PortScanProgressPayload, PortScanReport, PortScanSample,
+    PortScanSetting, PortState,
 };
 use crate::probe::scan::expand_ports;
 use crate::probe::scan::progress::ThrottledProgress;
@@ -192,13 +192,15 @@ pub async fn port_scan(
     if cancelled || token.is_cancelled() {
         let _ = app.emit(
             "portscan:cancelled",
-            PortScanCancelledPayload { run_id: run_id.clone() },
+            PortScanCancelledPayload {
+                run_id: run_id.clone(),
+            },
         );
         return Err(anyhow::anyhow!("cancelled"));
     }
 
     open_samples.sort_by_key(|s| s.port);
-    
+
     if setting.service_detection && !open_samples.is_empty() && !token.is_cancelled() {
         let _ = app.emit("portscan:service_detection_start", run_id.clone());
 
@@ -233,14 +235,20 @@ pub async fn port_scan(
         if service_cancelled || token.is_cancelled() {
             let _ = app.emit(
                 "portscan:cancelled",
-                PortScanCancelledPayload { run_id: run_id.clone() },
+                PortScanCancelledPayload {
+                    run_id: run_id.clone(),
+                },
             );
             return Err(anyhow::anyhow!("cancelled"));
         }
 
         if let Some(service_result) = service_result {
             for sample in &mut open_samples {
-                if let Some(res) = service_result.results.iter().find(|r| r.port == sample.port) {
+                if let Some(res) = service_result
+                    .results
+                    .iter()
+                    .find(|r| r.port == sample.port)
+                {
                     sample.service_info = Some(res.service_info.clone());
                 }
             }

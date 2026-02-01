@@ -1,16 +1,16 @@
+use crate::model::trace::{TraceCancelledPayload, TraceHop, TracerouteSetting};
+use crate::probe::packet::build_icmp_echo_bytes;
+use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
 use anyhow::Result;
 use nex_packet::icmp::{IcmpPacket, IcmpType};
 use nex_packet::icmpv6::{Icmpv6Packet, Icmpv6Type};
 use nex_packet::ip::IpNextProtocol;
 use nex_packet::ipv4::Ipv4Packet;
 use nex_packet::packet::Packet;
-use tokio_util::sync::CancellationToken;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-use crate::model::trace::{TraceCancelledPayload, TraceHop, TracerouteSetting};
-use crate::probe::packet::build_icmp_echo_bytes;
-use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
+use tokio_util::sync::CancellationToken;
 
 /// Check if the ICMP packet is an Echo Reply for the given destination IP
 fn is_echo_reply(dst_ip: IpAddr, icmp_bytes: &[u8]) -> bool {
@@ -44,7 +44,7 @@ pub async fn icmp_traceroute(
     run_id: &str,
     src_ip: IpAddr,
     setting: &TracerouteSetting,
-    token: CancellationToken
+    token: CancellationToken,
 ) -> Result<bool> {
     let dst_ip = setting.ip_addr;
     let icmp_kind = if dst_ip.is_ipv4() {
@@ -63,10 +63,7 @@ pub async fn icmp_traceroute(
 
     'ttl_loop: for ttl in 1..=setting.max_hops {
         if token.is_cancelled() {
-            let _ = app.emit(
-                "traceroute:cancelled",
-                run_id.to_string(),
-            );
+            let _ = app.emit("traceroute:cancelled", run_id.to_string());
             return Err(anyhow::anyhow!("cancelled"));
         }
         // Create socket for each TTL/HopLimit

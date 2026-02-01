@@ -5,8 +5,8 @@ use tauri::{AppHandle, Emitter};
 use tokio_util::sync::CancellationToken;
 
 use crate::model::scan::{
-    NeighborHost, NeighborScanReport,
-    NeighborScanStartPayload, NeighborScanCancelledPayload, NeighborScanErrorPayload,
+    NeighborHost, NeighborScanCancelledPayload, NeighborScanErrorPayload, NeighborScanReport,
+    NeighborScanStartPayload,
 };
 
 pub async fn neighbor_scan(
@@ -18,14 +18,21 @@ pub async fn neighbor_scan(
     let app = app.clone();
     let run_id = run_id.to_string();
 
-    let _ = app.emit("neighborscan:start", NeighborScanStartPayload { run_id: run_id.clone() });
+    let _ = app.emit(
+        "neighborscan:start",
+        NeighborScanStartPayload {
+            run_id: run_id.clone(),
+        },
+    );
 
     let src_ipv4_opt = iface.ipv4_addrs().into_iter().next().map(IpAddr::V4);
     let src_ipv6_opt = iface.ipv6_addrs().into_iter().next().map(IpAddr::V6);
-    
+
     let _ = app.emit(
         "hostscan:start",
-        crate::model::scan::HostScanStartPayload { run_id: run_id.clone() },
+        crate::model::scan::HostScanStartPayload {
+            run_id: run_id.clone(),
+        },
     );
 
     let setting = crate::model::scan::HostScanSetting::neighbor_scan_default(&iface);
@@ -45,12 +52,17 @@ pub async fn neighbor_scan(
             if token.is_cancelled() {
                 let _ = app.emit(
                     "neighborscan:cancelled",
-                    NeighborScanCancelledPayload { run_id: run_id.clone() },
+                    NeighborScanCancelledPayload {
+                        run_id: run_id.clone(),
+                    },
                 );
             } else {
                 let _ = app.emit(
                     "neighborscan:error",
-                    NeighborScanErrorPayload { run_id: run_id.clone(), message: e.to_string() },
+                    NeighborScanErrorPayload {
+                        run_id: run_id.clone(),
+                        message: e.to_string(),
+                    },
                 );
             }
             return Err(e);
@@ -60,7 +72,9 @@ pub async fn neighbor_scan(
     if token.is_cancelled() {
         let _ = app.emit(
             "neighborscan:cancelled",
-            NeighborScanCancelledPayload { run_id: run_id.clone() },
+            NeighborScanCancelledPayload {
+                run_id: run_id.clone(),
+            },
         );
         return Err(anyhow::anyhow!("cancelled"));
     }
@@ -74,7 +88,10 @@ pub async fn neighbor_scan(
     for (host, rtt) in hostscan_result.alive {
         let mac_addr = neigh_table.get(&host.ip).cloned();
         let vendor = match mac_addr {
-            Some(mac) => oui_db.lookup_mac(&mac).map(|o| o.vendor_detail.clone()).flatten(),
+            Some(mac) => oui_db
+                .lookup_mac(&mac)
+                .map(|o| o.vendor_detail.clone())
+                .flatten(),
             None => None,
         };
 

@@ -1,14 +1,17 @@
 use anyhow::Result;
 use futures::{stream, StreamExt};
 use rand::{seq::SliceRandom, thread_rng};
-use tokio_util::sync::CancellationToken;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+use tokio_util::sync::CancellationToken;
 
 use crate::model::endpoint::Endpoint;
-use crate::model::scan::{PortScanCancelledPayload, PortScanProgressPayload, PortScanReport, PortScanSample, PortScanSetting, PortState};
+use crate::model::scan::{
+    PortScanCancelledPayload, PortScanProgressPayload, PortScanReport, PortScanSample,
+    PortScanSetting, PortState,
+};
 use crate::probe::scan::expand_ports;
 use crate::probe::scan::progress::ThrottledProgress;
 use crate::probe::scan::tuner::ports_concurrency;
@@ -19,7 +22,7 @@ pub async fn port_scan(
     run_id: &str,
     _src_ip: IpAddr,
     setting: PortScanSetting,
-    token: CancellationToken
+    token: CancellationToken,
 ) -> Result<PortScanReport> {
     let mut ports = expand_ports(&setting.target_ports_preset, &setting.user_ports);
     if !setting.ordered {
@@ -56,11 +59,14 @@ pub async fn port_scan(
                         let (done, should_emit) = progress.on_advance();
 
                         if should_emit {
-                            let _ = app.emit("portscan:progress", PortScanProgressPayload {
-                                run_id: run_id.to_string(),
-                                done,
-                                total,
-                            });
+                            let _ = app.emit(
+                                "portscan:progress",
+                                PortScanProgressPayload {
+                                    run_id: run_id.to_string(),
+                                    done,
+                                    total,
+                                },
+                            );
                         }
 
                         return Some(PortScanSample {
@@ -134,11 +140,14 @@ pub async fn port_scan(
 
                 // Progress event
                 if should_emit {
-                    let _ = app.emit("portscan:progress", PortScanProgressPayload {
-                        run_id: run_id.to_string(),
-                        done,
-                        total,
-                    });
+                    let _ = app.emit(
+                        "portscan:progress",
+                        PortScanProgressPayload {
+                            run_id: run_id.to_string(),
+                            done,
+                            total,
+                        },
+                    );
                 }
 
                 Some(sample)
@@ -174,7 +183,12 @@ pub async fn port_scan(
     }
 
     if cancelled || token.is_cancelled() {
-        let _ = app.emit("portscan:cancelled", PortScanCancelledPayload{ run_id: run_id.to_string() });
+        let _ = app.emit(
+            "portscan:cancelled",
+            PortScanCancelledPayload {
+                run_id: run_id.to_string(),
+            },
+        );
         return Err(anyhow::anyhow!("cancelled"));
     }
 
@@ -211,7 +225,12 @@ pub async fn port_scan(
         };
 
         if service_cancelled || token.is_cancelled() {
-            let _ = app.emit("portscan:cancelled", PortScanCancelledPayload{ run_id: run_id.to_string() });
+            let _ = app.emit(
+                "portscan:cancelled",
+                PortScanCancelledPayload {
+                    run_id: run_id.to_string(),
+                },
+            );
             return Err(anyhow::anyhow!("cancelled"));
         } else if let Some(service_result) = service_result {
             for sample in &mut open_samples {

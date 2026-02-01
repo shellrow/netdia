@@ -6,15 +6,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::model::speedtest::{
+    SpeedtestDirection, SpeedtestDonePayload, SpeedtestResult, SpeedtestUpdatePayload,
+};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use reqwest::Client;
-use tauri::{AppHandle, Emitter};
 use serde::Deserialize;
-use crate::model::speedtest::{
-    SpeedtestDirection, SpeedtestDonePayload, SpeedtestResult, SpeedtestUpdatePayload,
-};
+use tauri::{AppHandle, Emitter};
 
 const SPEEDTEST_BASE_URL: &str = "https://speedtest.foctal.com";
 pub(crate) const MAX_DURATION: Duration = Duration::from_secs(30);
@@ -179,15 +179,18 @@ async fn download_test(
     let elapsed = start.elapsed();
     let avg = mbps(transferred, elapsed.as_secs_f64());
 
-    let _ = app.emit("speedtest:done", SpeedtestDonePayload{
-        direction: SpeedtestDirection::Download,
-        result,
-        elapsed_ms: elapsed.as_millis() as u64,
-        transferred_bytes: transferred,
-        target_bytes,
-        avg_mbps: avg,
-        message: None,
-    });
+    let _ = app.emit(
+        "speedtest:done",
+        SpeedtestDonePayload {
+            direction: SpeedtestDirection::Download,
+            result,
+            elapsed_ms: elapsed.as_millis() as u64,
+            transferred_bytes: transferred,
+            target_bytes,
+            avg_mbps: avg,
+            message: None,
+        },
+    );
 
     Ok(())
 }
@@ -206,7 +209,10 @@ async fn upload_test(
 
     let sent2 = sent.clone();
     let body_stream = futures_util::stream::try_unfold(
-        UpState { remaining: target_bytes, start },
+        UpState {
+            remaining: target_bytes,
+            start,
+        },
         move |mut st| {
             let sent2 = sent2.clone();
             async move {
@@ -325,15 +331,18 @@ async fn upload_test(
     let transferred = sent.load(Ordering::Relaxed);
     let avg = mbps(transferred, elapsed.as_secs_f64());
 
-    let _ = app.emit("speedtest:done", SpeedtestDonePayload{
-        direction: SpeedtestDirection::Upload,
-        result,
-        elapsed_ms: elapsed.as_millis() as u64,
-        transferred_bytes: transferred,
-        target_bytes,
-        avg_mbps: avg,
-        message: None,
-    });
+    let _ = app.emit(
+        "speedtest:done",
+        SpeedtestDonePayload {
+            direction: SpeedtestDirection::Upload,
+            result,
+            elapsed_ms: elapsed.as_millis() as u64,
+            transferred_bytes: transferred,
+            target_bytes,
+            avg_mbps: avg,
+            message: None,
+        },
+    );
 
     Ok(())
 }

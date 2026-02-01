@@ -19,12 +19,20 @@ struct PingResp {
 fn median(mut v: Vec<f64>) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let n = v.len();
-    if n == 0 { return f64::NAN; }
-    if n % 2 == 1 { v[n/2] } else { (v[n/2 - 1] + v[n/2]) / 2.0 }
+    if n == 0 {
+        return f64::NAN;
+    }
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    }
 }
 
 fn stddev(v: &[f64]) -> f64 {
-    if v.is_empty() { return f64::NAN; }
+    if v.is_empty() {
+        return f64::NAN;
+    }
     let mean = v.iter().sum::<f64>() / v.len() as f64;
     let var = v.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / v.len() as f64;
     var.sqrt()
@@ -51,12 +59,15 @@ pub async fn measure_latency_jitter(app: &AppHandle, samples: u32) -> Result<()>
             }
         }
 
-        let _ = app.emit("latency:update", LatencyUpdatePayload {
-            phase: "running".into(),
-            sample: i + 1,
-            total: samples,
-            rtt_ms: elapsed,
-        });
+        let _ = app.emit(
+            "latency:update",
+            LatencyUpdatePayload {
+                phase: "running".into(),
+                sample: i + 1,
+                total: samples,
+                rtt_ms: elapsed,
+            },
+        );
 
         tokio::time::sleep(TICK_WAIT).await;
     }
@@ -64,12 +75,15 @@ pub async fn measure_latency_jitter(app: &AppHandle, samples: u32) -> Result<()>
     let lat = median(rtts.clone());
     let jit = stddev(&rtts);
 
-    let _ = app.emit("latency:done", LatencyDonePayload {
-        latency_ms: lat,
-        jitter_ms: jit,
-        samples: rtts,
-        colo,
-    });
+    let _ = app.emit(
+        "latency:done",
+        LatencyDonePayload {
+            latency_ms: lat,
+            jitter_ms: jit,
+            samples: rtts,
+            colo,
+        },
+    );
 
     Ok(())
 }

@@ -24,26 +24,37 @@ pub async fn start_speedtest(
         *last = Some((setting.direction.clone(), setting.target_bytes));
     }
 
-    let max_ms = setting.max_duration_ms.unwrap_or(MAX_DURATION.as_millis() as u64);
+    let max_ms = setting
+        .max_duration_ms
+        .unwrap_or(MAX_DURATION.as_millis() as u64);
     let max = std::time::Duration::from_millis(max_ms);
 
     let app2 = app.clone();
     let state2 = state.inner().clone();
 
     let handle = tauri::async_runtime::spawn(async move {
-        let r = net::speedtest::run_speedtest(&app2, setting.direction.clone(), setting.target_bytes, max).await;
+        let r = net::speedtest::run_speedtest(
+            &app2,
+            setting.direction.clone(),
+            setting.target_bytes,
+            max,
+        )
+        .await;
 
         // Send done event with error
         if let Err(e) = r {
-            let _ = app2.emit("speedtest:done", SpeedtestDonePayload{
-                direction: setting.direction,
-                result: SpeedtestResult::Error,
-                elapsed_ms: 0,
-                transferred_bytes: 0,
-                target_bytes: setting.target_bytes,
-                avg_mbps: 0.0,
-                message: Some(e.to_string()),
-            });
+            let _ = app2.emit(
+                "speedtest:done",
+                SpeedtestDonePayload {
+                    direction: setting.direction,
+                    result: SpeedtestResult::Error,
+                    elapsed_ms: 0,
+                    transferred_bytes: 0,
+                    target_bytes: setting.target_bytes,
+                    avg_mbps: 0.0,
+                    message: Some(e.to_string()),
+                },
+            );
         }
 
         // Clear handle
@@ -60,10 +71,7 @@ pub async fn start_speedtest(
 }
 
 #[tauri::command]
-pub async fn stop_speedtest(
-    app: AppHandle,
-    state: State<'_, Arc<AppState>>,
-) -> Result<(), String> {
+pub async fn stop_speedtest(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
     let last = { state.speedtest_last.lock().await.clone() };
 
     let aborted = {
@@ -79,15 +87,18 @@ pub async fn stop_speedtest(
     // Notify canceled
     if aborted {
         if let Some((direction, target_bytes)) = last {
-            let _ = app.emit("speedtest:done", SpeedtestDonePayload{
-                direction,
-                result: SpeedtestResult::Canceled,
-                elapsed_ms: 0,
-                transferred_bytes: 0,
-                target_bytes,
-                avg_mbps: 0.0,
-                message: None,
-            });
+            let _ = app.emit(
+                "speedtest:done",
+                SpeedtestDonePayload {
+                    direction,
+                    result: SpeedtestResult::Canceled,
+                    elapsed_ms: 0,
+                    transferred_bytes: 0,
+                    target_bytes,
+                    avg_mbps: 0.0,
+                    message: None,
+                },
+            );
         }
     }
 

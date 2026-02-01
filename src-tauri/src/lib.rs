@@ -5,12 +5,12 @@ mod fs;
 mod log;
 mod model;
 mod net;
+mod operation;
 mod probe;
 mod resources;
 mod service;
 mod socket;
 mod state;
-mod operation;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
