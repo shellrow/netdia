@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use anyhow::Result;
 use bytes::Bytes;
 use nex_packet::icmp::IcmpType;
@@ -7,6 +5,12 @@ use nex_packet::icmpv6::Icmpv6Packet;
 use nex_packet::icmpv6::Icmpv6Type;
 use nex_packet::packet::Packet;
 use nex_packet::{icmp::IcmpPacket, ip::IpNextProtocol, ipv4::Ipv4Packet};
+
+#[cfg(unix)]
+use tokio_util::sync::CancellationToken;
+#[cfg(unix)]
+use crate::model::ping::PingCancelledPayload;
+
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -60,6 +64,7 @@ pub async fn udp_ping_icmp_unreach(
     run_id: &str,
     _src_ip: IpAddr,
     setting: PingSetting,
+    token: CancellationToken
 ) -> Result<PingStat> {
     let dst_ip = setting.ip_addr;
     //let dst_port = setting.port.unwrap_or(DEFAULT_BASE_TARGET_UDP_PORT);
@@ -78,7 +83,6 @@ pub async fn udp_ping_icmp_unreach(
     let udp = AsyncUdpSocket::from_config(&ucfg)?;
 
     let local_addr = udp.local_addr()?;
-    //let src_port = local_addr.port();
 
     // ICMP Socket for receiving ICMP Port Unreachable messages
     let icmp_kind = if dst_ip.is_ipv4() {
@@ -94,6 +98,15 @@ pub async fn udp_ping_icmp_unreach(
     let mut received = 0u32;
 
     for seq in 1..=setting.count {
+        if token.is_cancelled() {
+            let _ = app.emit(
+        "ping:cancelled",
+        PingCancelledPayload {
+                    run_id: run_id.to_string(),
+                },
+            );
+            return Err(anyhow::anyhow!("cancelled"));
+        }
         let payload = Bytes::from_static(b"netd");
         let sent_at = Instant::now();
 
@@ -166,7 +179,18 @@ pub async fn udp_ping_icmp_unreach(
         samples.push(sample);
 
         if seq != setting.count {
-            tokio::time::sleep(Duration::from_millis(setting.send_rate_ms)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(setting.send_rate_ms)) => {}
+                _ = token.cancelled() => {
+                    let _ = app.emit(
+                        "ping:cancelled",
+                        PingCancelledPayload {
+                            run_id: run_id.to_string(),
+                        },
+                    );
+                    return Err(anyhow::anyhow!("cancelled"));
+                }
+            }
         }
     }
 
@@ -227,6 +251,7 @@ pub async fn udp_ping_icmp_unreach(
     run_id: &str,
     _src_ip: IpAddr,
     setting: PingSetting,
+    _token: CancellationToken
 ) -> Result<PingStat> {
     // Currently, windows is not supported for UDP ping via ICMP Port Unreachable
     // because it requires enabling promiscuous mode on ICMP socket.

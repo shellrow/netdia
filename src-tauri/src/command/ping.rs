@@ -3,11 +3,12 @@ use std::net::IpAddr;
 use netdev::Interface;
 use tauri::{AppHandle, Emitter};
 
-use crate::model::ping::{PingProtocol, PingSetting, PingStartPayload, PingStat};
+use crate::model::ping::{PingErrorPayload, PingProtocol, PingSetting, PingStartPayload};
+use crate::operation::OP_PING;
 use crate::probe::ping;
 
 #[tauri::command]
-pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<PingStat, String> {
+pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<(), String> {
     let default_interface: Interface = netdev::get_default_interface()
         .map_err(|e| format!("Failed to get default interface: {}", e))?;
     let src_ip = match setting.ip_addr {
@@ -31,7 +32,9 @@ pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<PingStat, Stri
         }
     };
     let run_id = uuid::Uuid::new_v4().to_string();
-    // Start event
+
+    let token = crate::operation::start_op(OP_PING);
+
     let _ = app.emit(
         "ping:start",
         PingStartPayload {
@@ -39,21 +42,41 @@ pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<PingStat, Stri
             setting: setting.clone(),
         },
     );
-    match setting.protocol {
-        PingProtocol::Icmp => ping::icmp::icmp_ping(&app, &run_id, src_ip, setting)
-            .await
-            .map_err(|e| e.to_string()),
-        PingProtocol::Tcp => ping::tcp::tcp_ping(&app, &run_id, src_ip, setting)
-            .await
-            .map_err(|e| e.to_string()),
-        PingProtocol::Udp => ping::udp::udp_ping_icmp_unreach(&app, &run_id, src_ip, setting)
-            .await
-            .map_err(|e| e.to_string()),
-        PingProtocol::Quic => ping::quic::quic_ping(&app, &run_id, src_ip, setting)
-            .await
-            .map_err(|e| e.to_string()),
-        PingProtocol::Http => ping::http::http_ping(&app, &run_id, setting)
-            .await
-            .map_err(|e| e.to_string()),
-    }
+
+    tauri::async_runtime::spawn(async move {
+        let res = match setting.protocol {
+            PingProtocol::Icmp => {
+                ping::icmp::icmp_ping(&app, &run_id, src_ip, setting, token).await
+            }
+            PingProtocol::Tcp => {
+                ping::tcp::tcp_ping(&app, &run_id, src_ip, setting, token).await
+            }
+            PingProtocol::Udp => {
+                ping::udp::udp_ping_icmp_unreach(&app, &run_id, src_ip, setting, token).await
+            }
+            PingProtocol::Quic => {
+                ping::quic::quic_ping(&app, &run_id, src_ip, setting, token).await
+            }
+            PingProtocol::Http => {
+                ping::http::http_ping(&app, &run_id, setting, token).await
+            }
+        };
+
+        if let Err(e) = res {
+            let _ = app.emit(
+                "ping:error",
+                PingErrorPayload {
+                    run_id: run_id.clone(),
+                    message: e.to_string(),
+                },
+            );
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_ping() -> bool {
+    crate::operation::cancel_op(OP_PING)
 }

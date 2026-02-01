@@ -2,10 +2,18 @@
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Textarea from 'primevue/textarea';
-import { HostScanProgress, HostScanReport, HostScanRequest } from "../types/probe";
+import DataTable from "primevue/datatable";
+import Column from "primevue/column";
+import Textarea from "primevue/textarea";
+import {
+  HostScanProgress,
+  HostScanReport,
+  HostScanRequest,
+  HostScanStartPayload,
+  HostScanCancelledPayload,
+  HostScanErrorPayload,
+  HostScanProgressPayload,
+} from "../types/probe";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
 import { fmtMs } from "../utils/formatter";
 
@@ -21,8 +29,11 @@ const form = reactive({
   concurrency: 100,
 });
 
+const activeRunId = ref<string | null>(null);
 const running = ref(false);
 const loading = ref(false);
+const canceling = ref(false);
+const cancelled = ref(false);
 const err = ref<string | null>(null);
 
 const progressDone = ref(0);
@@ -87,6 +98,8 @@ function resetResult() {
   aliveRows.value = [];
   report.value = null;
   err.value = null;
+  cancelled.value = false;
+  activeRunId.value = null;
 }
 
 const targetCount = computed(() =>
@@ -133,10 +146,6 @@ function parseTargetsForStart(): string[] {
   return Array.from(new Set(tokens));
 }
 
-let unlistenProgress: UnlistenFn | null = null;
-let unlistenAlive: UnlistenFn | null = null;
-let unlistenDone: UnlistenFn | null = null;
-
 async function startScan() {
   resetResult();
 
@@ -164,35 +173,54 @@ async function startScan() {
   };
 
   try {
-    const rep = await invoke<HostScanReport>("host_scan", { setting });
-    report.value = rep;
-    aliveRows.value = rep.alive.map(([host, rtt]) => ({
-      ip: String(host.ip),
-      hostname: host.hostname,
-      rtt,
-    }));
+    await invoke("host_scan", { setting });
   } catch (e: any) {
     err.value = String(e?.message ?? e);
+    running.value = false;
   } finally {
     loading.value = false;
-    running.value = false;
   }
 }
 
+async function cancelScan() {
+  canceling.value = true;
+  try {
+    await invoke("cancel_hostscan");
+  } catch (e: any) {
+    err.value = String(e?.message ?? e);
+  } finally {
+    canceling.value = false;
+  }
+}
+
+let unlistenStart: UnlistenFn | null = null;
+let unlistenProgress: UnlistenFn | null = null;
+let unlistenAlive: UnlistenFn | null = null;
+let unlistenDone: UnlistenFn | null = null;
+let unlistenCancelled: UnlistenFn | null = null;
+let unlistenError: UnlistenFn | null = null;
+
 onMounted(async () => {
-  // Lightweight progress: (done, total)
-  unlistenProgress = await listen("hostscan:progress", (ev: any) => {
-    const payload = ev?.payload;
-    if (!payload) return;
-    const [done, total] = payload as [number, number];
-    progressDone.value = done;
-    progressTotal.value = total;
+  unlistenStart = await listen<HostScanStartPayload>("hostscan:start", (ev) => {
+    const runId = ev?.payload?.run_id;
+    if (runId) activeRunId.value = runId;
+    progressDone.value = 0;
+    progressTotal.value = 0;
   });
 
-  // Alive hosts only
-  unlistenAlive = await listen<HostScanProgress>("hostscan:alive", (ev) => {
-    const p = ev.payload;
+  unlistenProgress = await listen<HostScanProgressPayload>("hostscan:progress", (ev) => {
+    const p = ev?.payload;
     if (!p) return;
+    if (activeRunId.value && p.run_id && p.run_id !== activeRunId.value) return;
+    progressDone.value = p.done;
+    progressTotal.value = p.total;
+  });
+
+  unlistenAlive = await listen<HostScanProgress>("hostscan:alive", (ev) => {
+    const p = ev?.payload;
+    if (!p) return;
+    if (activeRunId.value && p.run_id && p.run_id !== activeRunId.value) return;
+
     aliveRows.value = [
       ...aliveRows.value,
       {
@@ -202,24 +230,53 @@ onMounted(async () => {
     ];
   });
 
-  // Final report
   unlistenDone = await listen<HostScanReport>("hostscan:done", (ev) => {
-    const rep = ev.payload;
+    const rep = ev?.payload;
     if (!rep) return;
+    if (activeRunId.value && rep.run_id && rep.run_id !== activeRunId.value) return;
+
     report.value = rep;
     aliveRows.value = rep.alive.map(([host, rtt]) => ({
       ip: String(host.ip),
       hostname: host.hostname,
       rtt,
     }));
+
     running.value = false;
+    loading.value = false;
+    canceling.value = false;
+  });
+
+  unlistenCancelled = await listen<HostScanCancelledPayload>("hostscan:cancelled", (ev) => {
+    const p = ev?.payload;
+    const runId = p?.run_id;
+    if (activeRunId.value && runId && runId !== activeRunId.value) return;
+
+    cancelled.value = true;
+    running.value = false;
+    loading.value = false;
+    canceling.value = false;
+  });
+
+  unlistenError = await listen<HostScanErrorPayload>("hostscan:error", (ev) => {
+    const p = ev?.payload;
+    const runId = p?.run_id;
+    if (activeRunId.value && runId && runId !== activeRunId.value) return;
+
+    err.value = String(p?.message ?? "hostscan error");
+    running.value = false;
+    loading.value = false;
+    canceling.value = false;
   });
 });
 
 onBeforeUnmount(() => {
+  unlistenStart?.();
   unlistenProgress?.();
   unlistenAlive?.();
   unlistenDone?.();
+  unlistenCancelled?.();
+  unlistenError?.();
 });
 </script>
 
@@ -245,7 +302,7 @@ onBeforeUnmount(() => {
             ]"
             optionLabel="label"
             optionValue="value"
-            class="min-w-40" 
+            class="min-w-40"
             size="small"
           />
         </div>
@@ -261,9 +318,7 @@ onBeforeUnmount(() => {
           />
         </div>
         <div v-else class="flex flex-col gap-1">
-          <label class="text-xs text-surface-500"
-            >Host List (newline / space / comma)</label
-          >
+          <label class="text-xs text-surface-500">Host List (newline / space / comma)</label>
           <Textarea v-model="form.list" rows="2" class="w-[280px]" size="small" />
         </div>
 
@@ -289,6 +344,7 @@ onBeforeUnmount(() => {
             size="small"
           />
         </div>
+
         <div class="flex items-center gap-2 mb-2">
           <Checkbox v-model="form.ordered" :binary="true" inputId="ordered" />
           <label for="ordered" class="text-sm">Ordered</label>
@@ -310,32 +366,33 @@ onBeforeUnmount(() => {
           @click="startScan"
           size="small"
         />
+        <Button
+          label="Cancel"
+          icon="pi pi-stop"
+          severity="secondary"
+          :disabled="!running"
+          :loading="canceling"
+          @click="cancelScan"
+          size="small"
+        />
       </div>
     </div>
 
     <div class="flex-1 min-h-0">
-      <!-- Scrollable content -->
-      <ScrollPanel
-        :style="{ width: '100%', height: panelHeight }"
-        class="flex-1 min-h-0"
-      >
+      <ScrollPanel :style="{ width: '100%', height: panelHeight }" class="flex-1 min-h-0">
         <div class="grid grid-cols-1 gap-3">
           <!-- Progress -->
           <Card>
             <template #title>Progress</template>
             <template #content>
-              <div
-                class="flex items-center justify-between mb-2 text-sm text-surface-500"
-              >
-                <div>
-                  Scanned: {{ progressDone }} / {{ progressTotal || "-" }}
-                </div>
+              <div class="flex items-center justify-between mb-2 text-sm text-surface-500">
+                <div>Scanned: {{ progressDone }} / {{ progressTotal || "-" }}</div>
                 <div>{{ progressPct }}%</div>
               </div>
               <ProgressBar :value="progressPct" />
               <div class="mt-2 text-xs text-surface-500">
-                Alive hosts found:
-                <span class="font-mono">{{ aliveCount }}</span>
+                Alive hosts found: <span class="font-mono">{{ aliveCount }}</span>
+                <span v-if="cancelled" class="ml-2 text-orange-500">(cancelled)</span>
               </div>
             </template>
           </Card>
@@ -349,15 +406,11 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="grid grid-cols-2 gap-3 text-sm mb-3">
-                <div
-                  class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3"
-                >
+                <div class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3">
                   <div class="text-surface-500 text-xs">Alive</div>
                   <div class="font-medium">{{ aliveCount }}</div>
                 </div>
-                <div
-                  class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3"
-                >
+                <div class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3">
                   <div class="text-surface-500 text-xs">Unreachable</div>
                   <div class="font-medium">{{ unreachableCount }}</div>
                 </div>

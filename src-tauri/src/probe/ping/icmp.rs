@@ -1,4 +1,5 @@
 use anyhow::Result;
+use tokio_util::sync::CancellationToken;
 use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
@@ -9,7 +10,7 @@ use tauri::{AppHandle, Emitter};
 use crate::{
     model::{
         ping::{
-            PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat,
+            PingCancelledPayload, PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat
         },
         probe::{ProbeStatus, ProbeStatusKind},
     },
@@ -42,6 +43,7 @@ pub async fn icmp_ping(
     run_id: &str,
     src_ip: IpAddr,
     setting: PingSetting,
+    token: CancellationToken
 ) -> Result<PingStat> {
     let cfg = if setting.ip_addr.is_ipv4() {
         let mut c = IcmpConfig::new(IcmpKind::V4);
@@ -71,6 +73,15 @@ pub async fn icmp_ping(
     let mut received = 0u32;
 
     for seq in 1..=setting.count {
+        if token.is_cancelled() {
+            let _ = app.emit(
+        "ping:cancelled",
+        PingCancelledPayload {
+                    run_id: run_id.to_string(),
+                },
+            );
+            return Err(anyhow::anyhow!("cancelled"));
+        }
         let pkt = build_icmp_echo_bytes(src_ip, setting.ip_addr, echo_id, seq as u16, payload);
 
         let sent_at = Instant::now();
@@ -141,7 +152,18 @@ pub async fn icmp_ping(
         samples.push(sample);
 
         if seq != setting.count {
-            tokio::time::sleep(Duration::from_millis(setting.send_rate_ms)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(setting.send_rate_ms)) => {}
+                _ = token.cancelled() => {
+                    let _ = app.emit(
+                        "ping:cancelled",
+                        PingCancelledPayload {
+                            run_id: run_id.to_string(),
+                        },
+                    );
+                    return Err(anyhow::anyhow!("cancelled"));
+                }
+            }
         }
     }
 

@@ -32,7 +32,8 @@ const form = reactive({
 });
 
 const running = ref(false);
-const loading = ref(false);
+const opId = ref<string | null>(null);
+const canceling = ref(false);
 const err = ref<string | null>(null);
 
 // Progress hops
@@ -119,8 +120,8 @@ async function toTraceSetting(): Promise<TraceSetting> {
 
 async function startTrace() {
   resetResult();
+  canceling.value = false;
   running.value = true;
-  loading.value = true;
 
   try {
     const setting = await toTraceSetting();
@@ -128,8 +129,17 @@ async function startTrace() {
   } catch (e: any) {
     err.value = String(e?.message ?? e);
     running.value = false;
-  } finally {
-    loading.value = false;
+  }
+}
+
+async function cancelTrace() {
+  if (!running.value) return;
+  canceling.value = true;
+  try {
+    await invoke('cancel_traceroute');
+  } catch (e: any) {
+    err.value = String(e?.message ?? e);
+    canceling.value = false;
   }
 }
 
@@ -137,14 +147,15 @@ let unlistenStart: UnlistenFn | null = null;
 let unlistenProgress: UnlistenFn | null = null;
 let unlistenDone: UnlistenFn | null = null;
 let unlistenError: UnlistenFn | null = null;
+let unlistenCancelled: UnlistenFn | null = null;
 
 onMounted(async () => {
   await nextTick();
 
   // start
-  unlistenStart = await listen("traceroute:start", () => {
-    resetResult();
-    running.value = true;
+  unlistenStart = await listen("traceroute:start", (ev:any) => {
+    const p = ev?.payload ?? {};
+    opId.value = p.run_id ?? null;
   });
 
   // progress: each hop
@@ -181,6 +192,7 @@ onMounted(async () => {
       doneInfo.value = payload;
     }
     running.value = false;
+    canceling.value = false;
   });
 
   // error
@@ -188,9 +200,18 @@ onMounted(async () => {
     const p = ev?.payload ?? {};
     if (p.message) {
       err.value = String(p.message);
+    }
+    running.value = false;
+    canceling.value = false;
+  });
+
+  unlistenCancelled = await listen("traceroute:cancelled", (ev: any) => {
+    if (ev.payload?.run_id === opId.value) {
       running.value = false;
+      canceling.value = false;
     }
   });
+
 });
 
 onBeforeUnmount(() => {
@@ -198,6 +219,7 @@ onBeforeUnmount(() => {
   unlistenProgress?.();
   unlistenDone?.();
   unlistenError?.();
+  unlistenCancelled?.();
 });
 
 // Whether reached the target. The final result.
@@ -304,10 +326,19 @@ function fmtIp(ip?: string | null) {
           label="Start"
           icon="pi pi-play"
           :disabled="running || !form.host?.trim()"
-          :loading="loading"
+          :loading="running && !canceling"
           @click="startTrace"
           aria-label="Start traceroute"
           size="small"
+        />
+        <Button
+          label="Cancel"
+          icon="pi pi-stop"
+          :disabled="!running || canceling"
+          :loading="canceling"
+          severity="secondary"
+          size="small"
+          @click="cancelTrace"
         />
       </div>
     </div>
@@ -351,9 +382,11 @@ function fmtIp(ip?: string | null) {
                   - RTT: {{ fmtMs(lastHop.rtt_ms as any) }}
                 </div>
               </div>
-
               <div v-if="err" class="mt-3 text-red-500 text-sm">
                 {{ err }}
+              </div>
+              <div class="text-xs text-surface-500 mt-3">
+                {{ opId ? `Operation ID: ${opId}` : "" }}
               </div>
             </template>
           </Card>

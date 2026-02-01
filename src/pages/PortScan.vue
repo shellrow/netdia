@@ -5,6 +5,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import {
+  PortScanProgress,
   PortScanProtocol,
   PortScanReport,
   PortScanSample,
@@ -28,6 +29,8 @@ const form = reactive({
 
 const activeRunId = ref<string | null>(null);
 const running = ref(false);
+const canceling = ref(false);
+const cancelled = ref(false);
 const loading = ref(false);
 const serviceDetecting = ref(false);
 const err = ref<string | null>(null);
@@ -144,6 +147,9 @@ function resetResult() {
   err.value = null;
   progressDone.value = 0;
   progressTotal.value = 0;
+  serviceDetecting.value = false;
+  cancelled.value = false;
+  activeRunId.value = null;
 }
 
 const canStart = computed(() => !!form.host.trim());
@@ -156,15 +162,23 @@ async function startScan() {
 
   try {
     const setting = await toSetting();
-    const rep = await invoke<PortScanReport>("port_scan", { setting });
-    report.value = rep;
-    // Backend returns open-only samples in report.samples
-    openOnly.value = rep.samples ?? [];
+    await invoke<PortScanReport>("port_scan", { setting });
   } catch (e: any) {
     err.value = String(e?.message ?? e);
     running.value = false;
   } finally {
     loading.value = false;
+  }
+}
+
+async function cancelScan() {
+  canceling.value = true;
+  try {
+    await invoke("cancel_portscan");
+  } catch (e: any) {
+    err.value = String(e?.message ?? e);
+  } finally {
+    canceling.value = false;
   }
 }
 
@@ -191,6 +205,8 @@ let unlistenOpen: UnlistenFn | null = null;
 let unlistenDone: UnlistenFn | null = null;
 let unlistenSvcStart: UnlistenFn | null = null;
 let unlistenSvcDone: UnlistenFn | null = null;
+let unlistenCancelled: UnlistenFn | null = null;
+let unlistenError: UnlistenFn | null = null;
 
 // Set up event listeners on mount
 onMounted(async () => {
@@ -209,16 +225,17 @@ onMounted(async () => {
   });
   // Progress event
   unlistenProgress = await listen("portscan:progress", (ev: any) => {
-    const payload = ev?.payload;
-    if (!payload) return;
-    const [done, total] = payload as [number, number];
-    progressDone.value = done;
-    progressTotal.value = total;
+    const p = ev?.payload as PortScanProgress | undefined;
+    if (!p) return;
+    if (activeRunId.value && p.run_id !== activeRunId.value) return;
+    progressDone.value = p.done;
+    progressTotal.value = p.total;
   });
   // Open port sample event
   unlistenOpen = await listen("portscan:open", (ev: any) => {
     const s = ev?.payload as PortScanSample | undefined;
     if (!s) return;
+    if (activeRunId.value && s.run_id !== activeRunId.value) return;
     openOnly.value = [...openOnly.value, s];
   });
 
@@ -243,6 +260,32 @@ onMounted(async () => {
     }
     running.value = false;
   });
+
+  unlistenCancelled = await listen("portscan:cancelled", (ev:any) => {
+    const p = ev?.payload ?? {};
+    const runId = p.run_id as string | undefined;
+    if (activeRunId.value && runId && runId !== activeRunId.value) return;
+
+    cancelled.value = true;
+    running.value = false;
+    serviceDetecting.value = false;
+    loading.value = false;
+    canceling.value = false;
+  });
+
+  unlistenError = await listen("portscan:error", (ev:any) => {
+    const p = ev?.payload ?? {};
+    const runId = p.run_id ?? p[0];
+    const msg = p.message ?? p[1] ?? p;
+
+    if (activeRunId.value && runId && runId !== activeRunId.value) return;
+
+    err.value = String(msg);
+    running.value = false;
+    serviceDetecting.value = false;
+    loading.value = false;
+    canceling.value = false;
+  });
 });
 
 // Clean up listeners on unmount
@@ -253,6 +296,8 @@ onBeforeUnmount(() => {
   unlistenDone?.();
   unlistenSvcStart?.();
   unlistenSvcDone?.();
+  unlistenCancelled?.();
+  unlistenError?.();
 });
 </script>
 
@@ -327,7 +372,7 @@ onBeforeUnmount(() => {
             :min="200"
             :max="10000"
             :step="100"
-            inputClass="w-[120px]"
+            inputClass="w-[80px]"
             size="small"
           />
         </div>
@@ -357,6 +402,15 @@ onBeforeUnmount(() => {
           :disabled="running || !canStart"
           :loading="loading"
           @click="startScan"
+          size="small"
+        />
+        <Button
+          :disabled="!running || canceling"
+          label="Cancel"
+          icon="pi pi-stop"
+          severity="secondary"
+          :loading="canceling"
+          @click="cancelScan"
           size="small"
         />
       </div>

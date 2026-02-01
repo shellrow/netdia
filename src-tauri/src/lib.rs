@@ -10,6 +10,7 @@ mod resources;
 mod service;
 mod socket;
 mod state;
+mod operation;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

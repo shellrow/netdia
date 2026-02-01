@@ -166,3 +166,8 @@ pub struct PingErrorPayload {
     pub run_id: String,
     pub message: String,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PingCancelledPayload {
+    pub run_id: String,
+}
