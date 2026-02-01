@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use anyhow::Result;
 use bytes::Bytes;
 use nex_packet::icmp::IcmpPacket;
@@ -9,12 +7,10 @@ use nex_packet::icmpv6::Icmpv6Type;
 use nex_packet::ip::IpNextProtocol;
 use nex_packet::ipv4::Ipv4Packet;
 use nex_packet::packet::Packet;
-#[cfg(unix)]
 use tokio_util::sync::CancellationToken;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-#[cfg(unix)]
 use crate::model::trace::{TracerouteSetting, TraceCancelledPayload};
 use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
 use crate::socket::udp::{AsyncUdpSocket, UdpConfig};
@@ -43,7 +39,6 @@ fn is_port_unreach_v6(icmp_bytes: &[u8]) -> bool {
     false
 }
 
-#[cfg(unix)]
 pub async fn udp_traceroute(
     app: &AppHandle,
     run_id: &str,
@@ -171,22 +166,4 @@ pub async fn udp_traceroute(
     }
 
     Ok(reached)
-}
-
-#[cfg(windows)]
-pub async fn udp_traceroute(
-    _app: &AppHandle,
-    _run_id: &str,
-    _src_ip: IpAddr,
-    _setting: &TracerouteSetting,
-    _token: CancellationToken
-) -> Result<bool> {
-    // Currently, windows is not supported for UDP traceroute via ICMP Port Unreachable
-    // because it requires enabling promiscuous mode on ICMP socket.
-    // and it needs admin privileges.
-    // For cross-platform, non-admin, and not rely on npcap/winpcap, we skip implementing this feature on Windows.
-    // For now, just return an error.
-    Err(anyhow::anyhow!(
-        "UDP traceroute is not supported on Windows (ICMP capture limitation)."
-    ))
 }
