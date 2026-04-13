@@ -158,11 +158,13 @@ impl HttpProbe {
                     ctx.probe.port,
                     http_res.header_text
                 );
-                let mut svc = ServiceInfo::default();
-                svc.name = tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
-                svc.banner = http_res.status_line.clone();
-                svc.product = http_res.headers.get("server").cloned();
-                svc.raw = Some(http_res.raw_text.clone());
+                let mut svc = ServiceInfo {
+                    name: tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string()),
+                    banner: http_res.status_line.clone(),
+                    product: http_res.headers.get("server").cloned(),
+                    raw: Some(http_res.raw_text.clone()),
+                    ..Default::default()
+                };
 
                 tracing::debug!(
                     "HTTP Probe: {}:{} - Banner: {:?}, Server {:?}",
@@ -196,7 +198,7 @@ impl HttpProbe {
                 );
                 let payload_ctx = PayloadContext {
                     hostname: ctx.hostname.as_deref(),
-                    path: Some("/".into()),
+                    path: Some("/"),
                 };
                 let payload: Vec<u8> = payload_builder.payload(payload_ctx)?;
 
@@ -231,10 +233,11 @@ impl HttpProbe {
                 // server connection
                 let conn = tls_stream.get_ref().1;
 
-                let mut svc = ServiceInfo::default();
-                svc.name = tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
-
-                svc.tls_info = super::tls::extract_tls_info(&ctx, &conn);
+                let mut svc = ServiceInfo {
+                    name: tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string()),
+                    tls_info: super::tls::extract_tls_info(&ctx, conn),
+                    ..Default::default()
+                };
 
                 tls_stream.write_all(&payload).await?;
                 tls_stream.flush().await?;
@@ -296,11 +299,13 @@ impl HttpProbe {
                     ctx.probe.port,
                     http_res.header_text
                 );
-                let mut svc = ServiceInfo::default();
-                svc.name = tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
-                svc.banner = http_res.status_line.clone();
-                svc.product = http_res.headers.get("server").cloned();
-                svc.raw = Some(http_res.raw_text.clone());
+                let mut svc = ServiceInfo {
+                    name: tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string()),
+                    banner: http_res.status_line.clone(),
+                    product: http_res.headers.get("server").cloned(),
+                    raw: Some(http_res.raw_text.clone()),
+                    ..Default::default()
+                };
 
                 tracing::debug!(
                     "HTTP Probe: {}:{} - Banner: {:?}, Server {:?}",

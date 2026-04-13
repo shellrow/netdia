@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 use crate::log::DEFAULT_LOG_FILE_NAME;
@@ -97,6 +99,7 @@ impl AppConfig {
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum LogLevel {
     DEBUG,
     INFO,
@@ -114,16 +117,6 @@ impl LogLevel {
             LogLevel::ERROR => level == &LogLevel::ERROR,
         }
     }
-    #[allow(dead_code)]
-    pub fn to_string(&self) -> String {
-        match self {
-            LogLevel::DEBUG => "DEBUG",
-            LogLevel::INFO => "INFO",
-            LogLevel::WARN => "WARN",
-            LogLevel::ERROR => "ERROR",
-        }
-        .to_owned()
-    }
     pub fn to_level_filter(&self) -> tracing::Level {
         match self {
             LogLevel::DEBUG => tracing::Level::DEBUG,
@@ -131,6 +124,18 @@ impl LogLevel {
             LogLevel::WARN => tracing::Level::WARN,
             LogLevel::ERROR => tracing::Level::ERROR,
         }
+    }
+}
+
+impl fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let level = match self {
+            LogLevel::DEBUG => "DEBUG",
+            LogLevel::INFO => "INFO",
+            LogLevel::WARN => "WARN",
+            LogLevel::ERROR => "ERROR",
+        };
+        write!(f, "{level}")
     }
 }
 
@@ -146,11 +151,8 @@ impl LoggingConfig {
     pub fn new() -> LoggingConfig {
         LoggingConfig {
             level: LogLevel::INFO,
-            file_path: if let Some(path) = crate::fs::get_user_file_path(DEFAULT_LOG_FILE_NAME) {
-                Some(path.to_string_lossy().to_string())
-            } else {
-                None
-            },
+            file_path: crate::fs::get_user_file_path(DEFAULT_LOG_FILE_NAME)
+                .map(|path| path.to_string_lossy().to_string()),
         }
     }
 }

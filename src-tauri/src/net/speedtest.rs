@@ -36,6 +36,12 @@ enum SpeedtestAuth {
     Bearer(String),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SpeedtestBackend {
+    Cloudflare,
+    Legacy,
+}
+
 /// State for upload stream
 #[derive(Clone)]
 struct UpState {
@@ -51,8 +57,38 @@ fn mbps(bytes: u64, secs: f64) -> f64 {
     }
 }
 
+impl SpeedtestBackend {
+    fn base_url(self) -> &'static str {
+        match self {
+            SpeedtestBackend::Cloudflare => CLOUDFLARE_SPEEDTEST_BASE_URL,
+            SpeedtestBackend::Legacy => LEGACY_SPEEDTEST_BASE_URL,
+        }
+    }
+
+    fn referer(self) -> Option<&'static str> {
+        match self {
+            SpeedtestBackend::Cloudflare => Some(CLOUDFLARE_REFERER),
+            SpeedtestBackend::Legacy => None,
+        }
+    }
+
+    fn download_path(self) -> &'static str {
+        match self {
+            SpeedtestBackend::Cloudflare => "__down",
+            SpeedtestBackend::Legacy => "download",
+        }
+    }
+
+    fn upload_path(self) -> &'static str {
+        match self {
+            SpeedtestBackend::Cloudflare => "__up",
+            SpeedtestBackend::Legacy => "upload",
+        }
+    }
+}
+
 async fn get_token(client: &Client) -> Result<String> {
-    let url = format!("{}/token", LEGACY_SPEEDTEST_BASE_URL);
+    let url = format!("{}/token", SpeedtestBackend::Legacy.base_url());
     let resp = client.get(url).send().await.context("GET /token")?;
     if !resp.status().is_success() {
         anyhow::bail!("token http {}", resp.status());
@@ -81,7 +117,7 @@ fn build_client(max_duration: Duration, referer: Option<&str>) -> Result<Client>
 async fn run_speedtest_with_backend(
     app: &AppHandle,
     client: &Client,
-    base_url: &str,
+    backend: SpeedtestBackend,
     auth: &SpeedtestAuth,
     direction: SpeedtestDirection,
     target_bytes: u64,
@@ -89,10 +125,10 @@ async fn run_speedtest_with_backend(
 ) -> Result<()> {
     match direction {
         SpeedtestDirection::Download => {
-            download_test(app, client, base_url, auth, target_bytes, max_duration).await?;
+            download_test(app, client, backend, auth, target_bytes, max_duration).await?;
         }
         SpeedtestDirection::Upload => {
-            upload_test(app, client, base_url, auth, target_bytes, max_duration).await?;
+            upload_test(app, client, backend, auth, target_bytes, max_duration).await?;
         }
     }
 
@@ -105,11 +141,11 @@ pub async fn run_speedtest(
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    let cloudflare_client = build_client(max_duration, Some(CLOUDFLARE_REFERER))?;
+    let cloudflare_client = build_client(max_duration, SpeedtestBackend::Cloudflare.referer())?;
     let cloudflare_attempt = run_speedtest_with_backend(
         app,
         &cloudflare_client,
-        CLOUDFLARE_SPEEDTEST_BASE_URL,
+        SpeedtestBackend::Cloudflare,
         &SpeedtestAuth::None,
         direction.clone(),
         target_bytes,
@@ -123,13 +159,13 @@ pub async fn run_speedtest(
             "Cloudflare speed test failed; falling back to legacy speed test backend"
         );
 
-        let legacy_client = build_client(max_duration, None)?;
+        let legacy_client = build_client(max_duration, SpeedtestBackend::Legacy.referer())?;
         let legacy_token = get_token(&legacy_client).await?;
 
         return run_speedtest_with_backend(
             app,
             &legacy_client,
-            LEGACY_SPEEDTEST_BASE_URL,
+            SpeedtestBackend::Legacy,
             &SpeedtestAuth::Bearer(legacy_token),
             direction,
             target_bytes,
@@ -145,17 +181,16 @@ pub async fn run_speedtest(
 async fn download_test(
     app: &AppHandle,
     client: &Client,
-    base_url: &str,
+    backend: SpeedtestBackend,
     auth: &SpeedtestAuth,
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    let path = if base_url == CLOUDFLARE_SPEEDTEST_BASE_URL {
-        "__down"
-    } else {
-        "download"
-    };
-    let url = format!("{base_url}/{path}?bytes={target_bytes}");
+    let url = format!(
+        "{}/{}?bytes={target_bytes}",
+        backend.base_url(),
+        backend.download_path()
+    );
 
     let resp = apply_auth(client.get(url), auth)
         .send()
@@ -190,15 +225,15 @@ async fn download_test(
                 last_tick = Instant::now();
                 last_bytes = transferred;
 
-                let _ = app.emit("speedtest:update", SpeedtestUpdatePayload{
-                    direction: SpeedtestDirection::Download,
-                    phase: "running".into(),
+                emit_speedtest_update(
+                    app,
+                    SpeedtestDirection::Download,
                     elapsed_ms,
-                    transferred_bytes: transferred,
+                    transferred,
                     target_bytes,
-                    instant_mbps: instant,
-                    avg_mbps: avg,
-                });
+                    instant,
+                    avg,
+                );
 
                 if elapsed >= max_duration {
                     result = SpeedtestResult::Timeout;
@@ -237,8 +272,8 @@ async fn download_test(
     let elapsed = start.elapsed();
     let avg = mbps(transferred, elapsed.as_secs_f64());
 
-    let _ = app.emit(
-        "speedtest:done",
+    emit_speedtest_done(
+        app,
         SpeedtestDonePayload {
             direction: SpeedtestDirection::Download,
             result,
@@ -256,17 +291,12 @@ async fn download_test(
 async fn upload_test(
     app: &AppHandle,
     client: &Client,
-    base_url: &str,
+    backend: SpeedtestBackend,
     auth: &SpeedtestAuth,
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    let path = if base_url == CLOUDFLARE_SPEEDTEST_BASE_URL {
-        "__up"
-    } else {
-        "upload"
-    };
-    let url = format!("{base_url}/{path}");
+    let url = format!("{}/{}", backend.base_url(), backend.upload_path());
 
     let start = Instant::now();
     let sent = Arc::new(AtomicU64::new(0));
@@ -307,7 +337,7 @@ async fn upload_test(
     let mut last_tick = start;
     let mut last_bytes = 0u64;
 
-    let mut req_handle = tokio::spawn(async move { req_fut.await });
+    let mut req_handle = tokio::spawn(req_fut);
 
     let mut result = SpeedtestResult::Full;
 
@@ -326,15 +356,15 @@ async fn upload_test(
                 last_tick = Instant::now();
                 last_bytes = transferred;
 
-                let _ = app.emit("speedtest:update", SpeedtestUpdatePayload{
-                    direction: SpeedtestDirection::Upload,
-                    phase: "running".into(),
+                emit_speedtest_update(
+                    app,
+                    SpeedtestDirection::Upload,
                     elapsed_ms,
-                    transferred_bytes: transferred,
+                    transferred,
                     target_bytes,
-                    instant_mbps: instant,
-                    avg_mbps: avg,
-                });
+                    instant,
+                    avg,
+                );
 
                 if elapsed >= max_duration {
                     result = SpeedtestResult::Timeout;
@@ -373,8 +403,8 @@ async fn upload_test(
     let transferred = sent.load(Ordering::Relaxed);
     let avg = mbps(transferred, elapsed.as_secs_f64());
 
-    let _ = app.emit(
-        "speedtest:done",
+    emit_speedtest_done(
+        app,
         SpeedtestDonePayload {
             direction: SpeedtestDirection::Upload,
             result,
@@ -387,4 +417,31 @@ async fn upload_test(
     );
 
     Ok(())
+}
+
+fn emit_speedtest_update(
+    app: &AppHandle,
+    direction: SpeedtestDirection,
+    elapsed_ms: u64,
+    transferred_bytes: u64,
+    target_bytes: u64,
+    instant_mbps: f64,
+    avg_mbps: f64,
+) {
+    let _ = app.emit(
+        "speedtest:update",
+        SpeedtestUpdatePayload {
+            direction,
+            phase: "running".into(),
+            elapsed_ms,
+            transferred_bytes,
+            target_bytes,
+            instant_mbps,
+            avg_mbps,
+        },
+    );
+}
+
+fn emit_speedtest_done(app: &AppHandle, payload: SpeedtestDonePayload) {
+    let _ = app.emit("speedtest:done", payload);
 }

@@ -90,8 +90,7 @@ pub async fn neighbor_scan(
         let vendor = match mac_addr {
             Some(mac) => oui_db
                 .lookup_mac(&mac)
-                .map(|o| o.vendor_detail.clone())
-                .flatten(),
+                .and_then(|o| o.vendor_detail.clone()),
             None => None,
         };
 

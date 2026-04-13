@@ -71,7 +71,7 @@ pub fn run() {
             });
 
             if background {
-                let tray_icon_bytes = tray_icon_bytes(theme_is_dark(&app));
+                let tray_icon_bytes = tray_icon_bytes(theme_is_dark(app));
                 let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes)
                     .unwrap_or(app.default_window_icon().unwrap().clone());
 

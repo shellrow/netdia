@@ -78,7 +78,7 @@ pub fn init_port_probe_db() -> Result<()> {
             .collect();
         for service_probe in service_probes {
             let port = Port::new(port, service_probe.transport());
-            map.entry(port).or_insert_with(Vec::new).push(service_probe);
+            map.entry(port).or_default().push(service_probe);
         }
     }
     PORT_PROBE_DB

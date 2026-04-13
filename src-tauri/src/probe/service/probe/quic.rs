@@ -72,10 +72,10 @@ impl QuicProbe {
         // QUIC connection is established. Get ALPN
         let alpn_proto = match quinn_conn.handshake_data() {
             Some(data) => match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
-                Ok(hd) => match hd.protocol {
-                    Some(ref p) => Some(String::from_utf8_lossy(p).to_string()),
-                    None => None,
-                },
+                Ok(hd) => hd
+                    .protocol
+                    .as_ref()
+                    .map(|p| String::from_utf8_lossy(p).to_string()),
                 Err(_) => None,
             },
             None => None,
@@ -91,10 +91,11 @@ impl QuicProbe {
             .map(|der| der.to_vec());
 
         // Construct TlsInfo
-        let mut tls_info = TlsInfo::default();
-        tls_info.alpn = alpn_proto.clone();
-        // Fixed to TLS 1.3 for QUIC
-        tls_info.version = Some("TLSv1_3".into());
+        let mut tls_info = TlsInfo {
+            alpn: alpn_proto.clone(),
+            version: Some("TLSv1_3".into()),
+            ..Default::default()
+        };
         if let Some(bytes) = cert_der_bytes.as_deref() {
             if let Ok((_, x509)) = x509_parser::prelude::X509Certificate::from_der(bytes) {
                 tls_info.subject = x509
@@ -140,9 +141,9 @@ impl QuicProbe {
                 let h3_quinn_conn = h3_quinn::Connection::new(quinn_conn);
                 let (mut driver, mut send_request) = h3::client::new(h3_quinn_conn).await?;
                 let drive = async move {
-                    return Err::<(), h3::error::ConnectionError>(
+                    Err::<(), h3::error::ConnectionError>(
                         futures::future::poll_fn(|cx| driver.poll_close(cx)).await,
-                    );
+                    )
                 };
 
                 let request = async move {
@@ -234,10 +235,12 @@ impl QuicProbe {
             }
         }
 
-        let mut svc = ServiceInfo::default();
-        svc.name = Some("quic".into());
-        svc.quic_version = Some("1".into());
-        svc.tls_info = Some(tls_info);
+        let svc = ServiceInfo {
+            name: Some("quic".into()),
+            quic_version: Some("1".into()),
+            tls_info: Some(tls_info),
+            ..Default::default()
+        };
 
         let probe_result = PortProbeResult {
             ip: ctx.ip,

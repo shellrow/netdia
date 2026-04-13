@@ -77,7 +77,7 @@ impl ServiceDetector {
                 let mut results: Vec<Result<PortProbeResult>> = Vec::new();
                 if let Some(probes) = port_probe_db.get(&port) {
                     for probe in probes {
-                        let probe_payload = match service_probe_db.get(&probe) {
+                        let probe_payload = match service_probe_db.get(probe) {
                             Some(payload) => payload,
                             None => {
                                 results

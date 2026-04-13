@@ -143,16 +143,13 @@ impl HostScanSetting {
         let mut targets: Vec<MaybeHost> = Vec::new();
         if let Some(gw) = &iface.gateway {
             if let Some(ipv4) = gw.ipv4.first() {
-                match netdev::ipnet::Ipv4Net::new(*ipv4, 24) {
-                    Ok(ipv4net) => {
-                        for ipv4 in ipv4net.hosts() {
-                            targets.push(MaybeHost {
-                                ip: Some(IpAddr::V4(ipv4)),
-                                hostname: None,
-                            });
-                        }
+                if let Ok(ipv4net) = netdev::ipnet::Ipv4Net::new(*ipv4, 24) {
+                    for ipv4 in ipv4net.hosts() {
+                        targets.push(MaybeHost {
+                            ip: Some(IpAddr::V4(ipv4)),
+                            hostname: None,
+                        });
                     }
-                    Err(_) => {}
                 }
             }
         }

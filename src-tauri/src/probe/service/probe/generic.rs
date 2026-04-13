@@ -17,22 +17,21 @@ struct BannerLite {
 /// First line (terminated by \r\n or \n) is treated as banner.
 fn parse_banner(bytes: &[u8], max_preview: usize) -> BannerLite {
     let raw = String::from_utf8_lossy(bytes);
-    let mut out = BannerLite::default();
-    out.raw_text = if raw.len() > max_preview {
+    let raw_text = if raw.len() > max_preview {
         raw[..max_preview].to_string()
     } else {
         raw.to_string()
     };
-    let first = out
-        .raw_text
-        .split(|c| c == '\n')
+    let first = raw_text
+        .split('\n')
         .next()
         .unwrap_or("")
         .trim_end_matches('\r');
-    if !first.is_empty() {
-        out.first_line = Some(first.to_string());
+
+    BannerLite {
+        first_line: (!first.is_empty()).then(|| first.to_string()),
+        raw_text,
     }
-    out
 }
 
 /// Match response text against known service signatures.

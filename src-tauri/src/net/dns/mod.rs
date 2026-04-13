@@ -14,7 +14,7 @@ pub async fn lookup_host(host: &str, timeout: Duration) -> Result<Host> {
             .unwrap_or_else(|| ip.to_string());
         Ok(Host {
             hostname: Some(hostname),
-            ip: ip,
+            ip,
         })
     } else {
         // Resolve hostname to IP address

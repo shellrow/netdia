@@ -118,7 +118,7 @@ pub async fn udp_traceroute(
                     let rtt = sent_at.elapsed().as_millis() as u64;
                     let from_ip = from.ip();
 
-                    if best.rtt_ms.map_or(true, |cur| rtt < cur) {
+                    if best.rtt_ms.is_none_or(|cur| rtt < cur) {
                         best.rtt_ms = Some(rtt);
                         best.ip_addr = Some(from_ip);
                         best.note = None;

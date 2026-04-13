@@ -256,7 +256,7 @@ impl AsyncTcpSocket {
             Ok(_) => {
                 // connection completed immediately (rare case)
                 let std_stream: StdTcpStream = self.socket.into();
-                return TcpStream::from_std(std_stream);
+                TcpStream::from_std(std_stream)
             }
             Err(e)
                 if e.kind() == io::ErrorKind::WouldBlock
@@ -269,14 +269,14 @@ impl AsyncTcpSocket {
 
                 // check the final connection state with SO_ERROR
                 if let Some(err) = stream.take_error()? {
-                    return Err(err);
+                    Err(err)
+                } else {
+                    Ok(stream)
                 }
-
-                return Ok(stream);
             }
             Err(e) => {
                 println!("Failed to connect: {}", e);
-                return Err(e);
+                Err(e)
             }
         }
     }
@@ -382,7 +382,7 @@ impl AsyncTcpSocket {
         self.socket
             .local_addr()?
             .as_socket()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Failed to get socket address"))
+            .ok_or_else(|| io::Error::other("Failed to get socket address"))
     }
 
     /// Convert the internal socket into a Tokio `TcpStream`.

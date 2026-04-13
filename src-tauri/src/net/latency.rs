@@ -28,111 +28,84 @@ fn build_client(referer: Option<&str>) -> Result<Client> {
     builder.build().context("build reqwest client")
 }
 
-async fn measure_with_cloudflare(app: &AppHandle, samples: u32) -> Result<()> {
-    let client = build_client(Some(CLOUDFLARE_REFERER))?;
+async fn measure_with_client<F>(
+    app: &AppHandle,
+    client: &Client,
+    samples: u32,
+    mut probe: F,
+) -> Result<()>
+where
+    F: for<'a> FnMut(
+        &'a Client,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(f64, Option<String>)>> + Send + 'a>,
+    >,
+{
     let mut rtts: Vec<f64> = Vec::with_capacity(samples as usize);
     let mut colo: Option<String> = None;
 
     for i in 0..samples {
-        let t0 = Instant::now();
-        let resp = client
-            .get(CLOUDFLARE_PING_URL)
-            .send()
-            .await
-            .context("GET Cloudflare latency probe")?;
-        let elapsed = t0.elapsed().as_secs_f64() * 1000.0;
-
-        if !resp.status().is_success() {
-            anyhow::bail!("cloudflare latency http {}", resp.status());
-        }
-
-        if colo.is_none() {
-            colo = resp
-                .headers()
-                .get("cf-meta-colo")
-                .and_then(|value| value.to_str().ok())
-                .map(|value| value.to_string());
-        }
-
+        let (elapsed, sample_colo) = probe(client).await?;
         rtts.push(elapsed);
 
-        let _ = app.emit(
-            "latency:update",
-            LatencyUpdatePayload {
-                phase: "running".into(),
-                sample: i + 1,
-                total: samples,
-                rtt_ms: elapsed,
-            },
-        );
+        if colo.is_none() {
+            colo = sample_colo;
+        }
+
+        emit_latency_update(app, i + 1, samples, elapsed);
 
         tokio::time::sleep(TICK_WAIT).await;
     }
 
-    let lat = median(rtts.clone());
-    let jit = stddev(&rtts);
-
-    let _ = app.emit(
-        "latency:done",
-        LatencyDonePayload {
-            latency_ms: lat,
-            jitter_ms: jit,
-            samples: rtts,
-            colo,
-        },
-    );
+    emit_latency_done(app, rtts, colo);
 
     Ok(())
 }
 
+async fn measure_with_cloudflare(app: &AppHandle, samples: u32) -> Result<()> {
+    let client = build_client(Some(CLOUDFLARE_REFERER))?;
+    measure_with_client(app, &client, samples, |client| {
+        Box::pin(async move {
+            let t0 = Instant::now();
+            let resp = client
+                .get(CLOUDFLARE_PING_URL)
+                .send()
+                .await
+                .context("GET Cloudflare latency probe")?;
+            let elapsed = t0.elapsed().as_secs_f64() * 1000.0;
+
+            if !resp.status().is_success() {
+                anyhow::bail!("cloudflare latency http {}", resp.status());
+            }
+
+            let colo = resp
+                .headers()
+                .get("cf-meta-colo")
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value.to_string());
+
+            Ok((elapsed, colo))
+        })
+    })
+    .await
+}
+
 async fn measure_with_legacy_ping(app: &AppHandle, samples: u32) -> Result<()> {
     let client = build_client(None)?;
-    let mut rtts: Vec<f64> = Vec::with_capacity(samples as usize);
-    let mut colo: Option<String> = None;
-
-    for i in 0..samples {
-        let t0 = Instant::now();
-        let resp = client
-            .get(LEGACY_PING_URL)
-            .send()
-            .await
-            .context("GET /ping")?;
-        let elapsed = t0.elapsed().as_secs_f64() * 1000.0;
-        rtts.push(elapsed);
-
-        if colo.is_none() {
-            if let Ok(p) = resp.json::<PingResp>().await {
-                colo = p.colo;
-            }
-        }
-
-        let _ = app.emit(
-            "latency:update",
-            LatencyUpdatePayload {
-                phase: "running".into(),
-                sample: i + 1,
-                total: samples,
-                rtt_ms: elapsed,
-            },
-        );
-
-        tokio::time::sleep(TICK_WAIT).await;
-    }
-
-    let lat = median(rtts.clone());
-    let jit = stddev(&rtts);
-
-    let _ = app.emit(
-        "latency:done",
-        LatencyDonePayload {
-            latency_ms: lat,
-            jitter_ms: jit,
-            samples: rtts,
-            colo,
-        },
-    );
-
-    Ok(())
+    measure_with_client(app, &client, samples, |client| {
+        Box::pin(async move {
+            let t0 = Instant::now();
+            let resp = client
+                .get(LEGACY_PING_URL)
+                .send()
+                .await
+                .context("GET /ping")?;
+            let elapsed = t0.elapsed().as_secs_f64() * 1000.0;
+            let colo = resp.json::<PingResp>().await.ok().and_then(|p| p.colo);
+            Ok((elapsed, colo))
+        })
+    })
+    .await
 }
 
 fn median(mut v: Vec<f64>) -> f64 {
@@ -155,6 +128,33 @@ fn stddev(v: &[f64]) -> f64 {
     let mean = v.iter().sum::<f64>() / v.len() as f64;
     let var = v.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / v.len() as f64;
     var.sqrt()
+}
+
+fn emit_latency_update(app: &AppHandle, sample: u32, total: u32, rtt_ms: f64) {
+    let _ = app.emit(
+        "latency:update",
+        LatencyUpdatePayload {
+            phase: "running".into(),
+            sample,
+            total,
+            rtt_ms,
+        },
+    );
+}
+
+fn emit_latency_done(app: &AppHandle, samples: Vec<f64>, colo: Option<String>) {
+    let latency_ms = median(samples.clone());
+    let jitter_ms = stddev(&samples);
+
+    let _ = app.emit(
+        "latency:done",
+        LatencyDonePayload {
+            latency_ms,
+            jitter_ms,
+            samples,
+            colo,
+        },
+    );
 }
 
 pub async fn measure_latency_jitter(app: &AppHandle, samples: u32) -> Result<()> {

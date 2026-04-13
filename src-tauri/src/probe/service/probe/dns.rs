@@ -67,18 +67,17 @@ async fn run_dns_version_bind_udp(
     for ans in msg.answers() {
         if ans.record_type() == RecordType::TXT
             && ans.name().to_ascii().eq_ignore_ascii_case("version.bind.")
+            && ans.dns_class() == DNSClass::CH
         {
-            if ans.dns_class() == DNSClass::CH {
-                if let hickory_proto::rr::RData::TXT(t) = ans.data() {
-                    let joined = t
-                        .txt_data()
-                        .iter()
-                        .map(|b| String::from_utf8_lossy(b).to_string())
-                        .collect::<Vec<_>>()
-                        .join("");
-                    txt = joined;
-                    break;
-                }
+            if let hickory_proto::rr::RData::TXT(t) = ans.data() {
+                let joined = t
+                    .txt_data()
+                    .iter()
+                    .map(|b| String::from_utf8_lossy(b).to_string())
+                    .collect::<Vec<_>>()
+                    .join("");
+                txt = joined;
+                break;
             }
         }
     }
@@ -121,18 +120,17 @@ async fn run_dns_version_bind_tcp(
     for ans in msg.answers() {
         if ans.record_type() == RecordType::TXT
             && ans.name().to_ascii().eq_ignore_ascii_case("version.bind.")
+            && ans.dns_class() == DNSClass::CH
         {
-            if ans.dns_class() == DNSClass::CH {
-                if let hickory_proto::rr::RData::TXT(t) = ans.data() {
-                    let joined = t
-                        .txt_data()
-                        .iter()
-                        .map(|b| String::from_utf8_lossy(b).to_string())
-                        .collect::<Vec<_>>()
-                        .join("");
-                    if !joined.is_empty() {
-                        return Ok(joined);
-                    }
+            if let hickory_proto::rr::RData::TXT(t) = ans.data() {
+                let joined = t
+                    .txt_data()
+                    .iter()
+                    .map(|b| String::from_utf8_lossy(b).to_string())
+                    .collect::<Vec<_>>()
+                    .join("");
+                if !joined.is_empty() {
+                    return Ok(joined);
                 }
             }
         }

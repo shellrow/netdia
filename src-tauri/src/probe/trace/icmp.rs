@@ -122,7 +122,7 @@ pub async fn icmp_traceroute(
                     let from_ip = from.ip();
 
                     // Use this response as the representative for this hop (only adopt smaller RTT)
-                    if best.rtt_ms.map_or(true, |cur| rtt < cur) {
+                    if best.rtt_ms.is_none_or(|cur| rtt < cur) {
                         best.rtt_ms = Some(rtt);
                         best.ip_addr = Some(from_ip);
                         best.note = None;

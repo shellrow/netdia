@@ -61,7 +61,7 @@ pub async fn logs_dir_path(
 
     // fallback to app dir
     let folder = folder
-        .or_else(|| crate::fs::get_app_dir_path())
+        .or_else(crate::fs::get_app_dir_path)
         .ok_or("Failed to resolve logs folder path")?;
 
     let folder_str = folder.to_string_lossy().to_string();

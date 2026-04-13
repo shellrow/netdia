@@ -24,7 +24,7 @@ pub fn tls_oid_map() -> &'static TlsOidMap {
 /// Initialize the TLS OID map from the bundled JSON data.
 pub fn init_tls_oid_map() -> Result<()> {
     let map: TlsOidMap =
-        serde_json::from_str(&TLS_OID_MAP_JSON).expect("invalid nd-tls-oid-map.json");
+        serde_json::from_str(TLS_OID_MAP_JSON).expect("invalid nd-tls-oid-map.json");
     TLS_OID_MAP
         .set(map)
         .map_err(|_| anyhow::anyhow!("Failed to set TLS_OID_MAP in OnceLock"))?;

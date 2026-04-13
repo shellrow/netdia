@@ -32,7 +32,7 @@ pub fn build_icmp_echo_bytes(src: IpAddr, dst: IpAddr, id: u16, seq: u16, payloa
 
 /// Extract id/seq of ICMP Echo Reply (IPv4)
 pub fn parse_icmp_echo_v4(buf: &[u8]) -> Option<IcmpEchoReplyPacket> {
-    if let Some(ipv4_packet) = Ipv4Packet::from_buf(&buf) {
+    if let Some(ipv4_packet) = Ipv4Packet::from_buf(buf) {
         if ipv4_packet.header.next_level_protocol == nex_packet::ip::IpNextProtocol::Icmp {
             if let Some(icmp_packet) = IcmpPacket::from_bytes(ipv4_packet.payload()) {
                 match icmp::echo_reply::EchoReplyPacket::try_from(icmp_packet) {
@@ -52,9 +52,9 @@ pub fn parse_icmp_echo_v4(buf: &[u8]) -> Option<IcmpEchoReplyPacket> {
 /// Extract id/seq of ICMPv6 Echo Reply. (ICMPv6 Header only)
 /// The IPv6 header is automatically cropped off when recvfrom() is used.
 pub fn parse_icmp_echo_v6(buf: &[u8]) -> Option<Icmpv6EchoReplyPacket> {
-    if let Some(icmpv6_packet) = Icmpv6Packet::from_buf(&buf) {
+    if let Some(icmpv6_packet) = Icmpv6Packet::from_buf(buf) {
         match icmpv6_packet.header.icmpv6_type {
-            Icmpv6Type::EchoReply => match Icmpv6EchoReplyPacket::from_buf(&buf) {
+            Icmpv6Type::EchoReply => match Icmpv6EchoReplyPacket::from_buf(buf) {
                 Some(reply) => {
                     return Some(reply);
                 }

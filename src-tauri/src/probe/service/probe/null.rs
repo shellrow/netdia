@@ -39,30 +39,31 @@ fn looks_like_text_line(s: &str) -> bool {
 /// 3. If neither exists, use the first line (raw)
 fn parse_banner(bytes: &[u8], max_preview: usize) -> BannerLite {
     let raw = String::from_utf8_lossy(bytes);
-    let mut out = BannerLite::default();
-
-    out.raw_text = if raw.len() > max_preview {
+    let raw_text = if raw.len() > max_preview {
         raw[..max_preview].to_string()
     } else {
         raw.to_string()
     };
 
-    let mut lines = out
-        .raw_text
-        .split(|c| c == '\n')
-        .map(|l| l.trim_end_matches('\r'));
+    let mut lines = raw_text.split('\n').map(|l| l.trim_end_matches('\r'));
 
     let first = lines.next().unwrap_or("");
     let second = lines.next().unwrap_or("");
 
-    if looks_like_text_line(first) {
-        out.first_line = Some(first.to_string());
+    let first_line = if looks_like_text_line(first) {
+        Some(first.to_string())
     } else if !second.is_empty() {
-        out.first_line = Some(second.to_string());
+        Some(second.to_string())
     } else if !first.is_empty() {
-        out.first_line = Some(first.to_string());
+        Some(first.to_string())
+    } else {
+        None
+    };
+
+    BannerLite {
+        first_line,
+        raw_text,
     }
-    out
 }
 
 /// Match response text against known service signatures for tcp:NULL probes.
