@@ -12,11 +12,13 @@ use crate::model::speedtest::{
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_util::StreamExt;
-use reqwest::Client;
+use reqwest::{header, Client, RequestBuilder};
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
 
-const SPEEDTEST_BASE_URL: &str = "https://speedtest.foctal.com";
+const CLOUDFLARE_SPEEDTEST_BASE_URL: &str = "https://speed.cloudflare.com";
+const LEGACY_SPEEDTEST_BASE_URL: &str = "https://speedtest.foctal.com";
+const CLOUDFLARE_REFERER: &str = "https://speed.cloudflare.com/";
 pub(crate) const MAX_DURATION: Duration = Duration::from_secs(30);
 const TICK: Duration = Duration::from_millis(250);
 const CHUNK_SIZE: usize = 64 * 1024;
@@ -26,6 +28,12 @@ struct TokenResp {
     token: String,
     #[allow(dead_code)]
     expires_in: i64,
+}
+
+#[derive(Clone)]
+enum SpeedtestAuth {
+    None,
+    Bearer(String),
 }
 
 /// State for upload stream
@@ -44,7 +52,7 @@ fn mbps(bytes: u64, secs: f64) -> f64 {
 }
 
 async fn get_token(client: &Client) -> Result<String> {
-    let url = format!("{}/token", SPEEDTEST_BASE_URL);
+    let url = format!("{}/token", LEGACY_SPEEDTEST_BASE_URL);
     let resp = client.get(url).send().await.context("GET /token")?;
     if !resp.status().is_success() {
         anyhow::bail!("token http {}", resp.status());
@@ -53,26 +61,82 @@ async fn get_token(client: &Client) -> Result<String> {
     Ok(tr.token)
 }
 
+fn apply_auth(builder: RequestBuilder, auth: &SpeedtestAuth) -> RequestBuilder {
+    match auth {
+        SpeedtestAuth::None => builder,
+        SpeedtestAuth::Bearer(token) => builder.bearer_auth(token),
+    }
+}
+
+fn build_client(max_duration: Duration, referer: Option<&str>) -> Result<Client> {
+    let mut builder = Client::builder().timeout(max_duration + Duration::from_secs(5));
+    if let Some(referer) = referer {
+        let mut headers = header::HeaderMap::new();
+        headers.insert(header::REFERER, header::HeaderValue::from_str(referer)?);
+        builder = builder.default_headers(headers);
+    }
+    builder.build().context("build reqwest client")
+}
+
+async fn run_speedtest_with_backend(
+    app: &AppHandle,
+    client: &Client,
+    base_url: &str,
+    auth: &SpeedtestAuth,
+    direction: SpeedtestDirection,
+    target_bytes: u64,
+    max_duration: Duration,
+) -> Result<()> {
+    match direction {
+        SpeedtestDirection::Download => {
+            download_test(app, client, base_url, auth, target_bytes, max_duration).await?;
+        }
+        SpeedtestDirection::Upload => {
+            upload_test(app, client, base_url, auth, target_bytes, max_duration).await?;
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn run_speedtest(
     app: &AppHandle,
     direction: SpeedtestDirection,
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    let client = Client::builder()
-        .timeout(max_duration + Duration::from_secs(5))
-        .build()
-        .context("build reqwest client")?;
+    let cloudflare_client = build_client(max_duration, Some(CLOUDFLARE_REFERER))?;
+    let cloudflare_attempt = run_speedtest_with_backend(
+        app,
+        &cloudflare_client,
+        CLOUDFLARE_SPEEDTEST_BASE_URL,
+        &SpeedtestAuth::None,
+        direction.clone(),
+        target_bytes,
+        max_duration,
+    )
+    .await;
 
-    let token = get_token(&client).await?;
+    if let Err(cloudflare_error) = cloudflare_attempt {
+        tracing::warn!(
+            error = %cloudflare_error,
+            "Cloudflare speed test failed; falling back to legacy speed test backend"
+        );
 
-    match direction {
-        SpeedtestDirection::Download => {
-            download_test(app, &client, &token, target_bytes, max_duration).await?;
-        }
-        SpeedtestDirection::Upload => {
-            upload_test(app, &client, &token, target_bytes, max_duration).await?;
-        }
+        let legacy_client = build_client(max_duration, None)?;
+        let legacy_token = get_token(&legacy_client).await?;
+
+        return run_speedtest_with_backend(
+            app,
+            &legacy_client,
+            LEGACY_SPEEDTEST_BASE_URL,
+            &SpeedtestAuth::Bearer(legacy_token),
+            direction,
+            target_bytes,
+            max_duration,
+        )
+        .await
+        .with_context(|| format!("cloudflare backend failed: {cloudflare_error}"));
     }
 
     Ok(())
@@ -81,18 +145,22 @@ pub async fn run_speedtest(
 async fn download_test(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    base_url: &str,
+    auth: &SpeedtestAuth,
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    let url = format!("{}/download?bytes={}", SPEEDTEST_BASE_URL, target_bytes);
+    let path = if base_url == CLOUDFLARE_SPEEDTEST_BASE_URL {
+        "__down"
+    } else {
+        "download"
+    };
+    let url = format!("{base_url}/{path}?bytes={target_bytes}");
 
-    let resp = client
-        .get(url)
-        .bearer_auth(token)
+    let resp = apply_auth(client.get(url), auth)
         .send()
         .await
-        .context("GET /download")?;
+        .context("GET download")?;
 
     if !resp.status().is_success() {
         anyhow::bail!("download http {}", resp.status());
@@ -155,16 +223,6 @@ async fn download_test(
                         }
                     }
                     Some(Err(e)) => {
-                        // Stream error or aborted
-                        let _ = app.emit("speedtest:done", SpeedtestDonePayload{
-                            direction: SpeedtestDirection::Download,
-                            result: SpeedtestResult::Error,
-                            elapsed_ms: start.elapsed().as_millis() as u64,
-                            transferred_bytes: transferred,
-                            target_bytes,
-                            avg_mbps: mbps(transferred, start.elapsed().as_secs_f64()),
-                            message: Some(e.to_string()),
-                        });
                         return Err(anyhow::anyhow!(e));
                     }
                     None => {
@@ -198,11 +256,17 @@ async fn download_test(
 async fn upload_test(
     app: &AppHandle,
     client: &Client,
-    token: &str,
+    base_url: &str,
+    auth: &SpeedtestAuth,
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    let url = format!("{}/upload", SPEEDTEST_BASE_URL);
+    let path = if base_url == CLOUDFLARE_SPEEDTEST_BASE_URL {
+        "__up"
+    } else {
+        "upload"
+    };
+    let url = format!("{base_url}/{path}");
 
     let start = Instant::now();
     let sent = Arc::new(AtomicU64::new(0));
@@ -234,9 +298,7 @@ async fn upload_test(
         },
     );
 
-    let req_fut = client
-        .post(url)
-        .bearer_auth(token)
+    let req_fut = apply_auth(client.post(url), auth)
         .body(reqwest::Body::wrap_stream(body_stream))
         .send();
 
@@ -290,31 +352,11 @@ async fn upload_test(
                 match r {
                     Ok(Ok(resp)) => {
                         if !resp.status().is_success() {
-                            result = SpeedtestResult::Error;
-                            let _ = app.emit("speedtest:done", SpeedtestDonePayload{
-                                direction: SpeedtestDirection::Upload,
-                                result,
-                                elapsed_ms: start.elapsed().as_millis() as u64,
-                                transferred_bytes: sent.load(Ordering::Relaxed),
-                                target_bytes,
-                                avg_mbps: mbps(sent.load(Ordering::Relaxed), start.elapsed().as_secs_f64()),
-                                message: Some(format!("upload http {}", resp.status())),
-                            });
                             anyhow::bail!("upload http {}", resp.status());
                         }
                         break;
                     }
                     Ok(Err(e)) => {
-                        result = SpeedtestResult::Error;
-                        let _ = app.emit("speedtest:done", SpeedtestDonePayload{
-                            direction: SpeedtestDirection::Upload,
-                            result,
-                            elapsed_ms: start.elapsed().as_millis() as u64,
-                            transferred_bytes: sent.load(Ordering::Relaxed),
-                            target_bytes,
-                            avg_mbps: mbps(sent.load(Ordering::Relaxed), start.elapsed().as_secs_f64()),
-                            message: Some(e.to_string()),
-                        });
                         return Err(anyhow::anyhow!(e));
                     }
                     Err(_join_err) => {
