@@ -11,6 +11,25 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  background: var(--p-surface-50);
+  color: var(--p-text-color);
+}
+
+.app-dark body {
+  background: var(--p-surface-950);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--p-primary-400) 28%, transparent);
+}
+
 .copyable {
   user-select: text;
   -webkit-user-select: text;
@@ -28,4 +47,117 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  border-radius: 0.8rem;
+}
+
+:where(
+  a,
+  button,
+  .p-button,
+  .p-inputtext,
+  .p-inputnumber-input,
+  .p-select,
+  .p-multiselect,
+  .p-selectbutton .p-togglebutton,
+  .p-datatable-tbody > tr
+):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--p-primary-400) 70%, transparent);
+  outline-offset: 2px;
+}
+
+:where(.p-inputtext, .p-inputnumber-input, .p-select, .p-multiselect) {
+  border-radius: 0.8rem;
+}
+
+:where(.p-button) {
+  border-radius: 0.8rem;
+}
+
+:where(.p-tag) {
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+:where(.p-card) {
+  border: 1px solid var(--p-content-border-color);
+  border-radius: 1rem;
+  overflow: hidden;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+}
+
+.app-dark :where(.p-card) {
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+}
+
+:where(.p-card-body) {
+  gap: 0.95rem;
+  padding: 1rem 1.05rem;
+}
+
+:where(.p-card-title) {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+:where(.p-datatable) {
+  border: 1px solid var(--p-content-border-color);
+  border-radius: 1rem;
+  overflow: hidden;
+}
+
+:where(.p-datatable-table) {
+  font-size: 0.92rem;
+}
+
+:where(.p-datatable-header),
+:where(.p-datatable-footer) {
+  padding: 0.9rem 1rem;
+}
+
+:where(.p-datatable-thead > tr > th) {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-color: var(--p-content-border-color);
+}
+
+:where(.p-datatable-tbody > tr > td),
+:where(.p-datatable-tfoot > tr > td) {
+  border-color: var(--p-content-border-color);
+}
+
+:where(.p-datatable-tbody > tr) {
+  transition: background-color 140ms ease;
+}
+
+:where(.p-datatable-tbody > tr:hover > td) {
+  background: rgba(127, 127, 127, 0.05);
+}
+
+.app-dark :where(.p-datatable-tbody > tr:hover > td) {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+:where(.p-paginator) {
+  border-top: 1px solid var(--p-content-border-color);
+  padding: 0.7rem 0.9rem;
+}
+
+:where(.p-paginator .p-paginator-page,
+.p-paginator .p-paginator-prev,
+.p-paginator .p-paginator-next,
+.p-paginator .p-paginator-first,
+.p-paginator .p-paginator-last,
+.p-paginator .p-select) {
+  border-radius: 0.75rem;
+}
+
+:where(.p-scrollpanel-bar) {
+  opacity: 0.55;
+}
+
+:where(.p-scrollpanel-bar:hover) {
+  opacity: 0.8;
 }
