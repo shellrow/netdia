@@ -32,7 +32,7 @@ tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["time", "chrono"] }
 libc = "0.2"
 mac-addr = { version = "0.3.0" }
-netdev = { version = "0.40", features = ["serde"] }
+netdev = { version = "0.42", features = ["serde"] }
 netroute = { version = "0.3", features = ["serde"] }
 netsock = { version = "0.5", features = ["serde"] }
 futures = {version = "0.3", features = ["executor", "thread-pool"] }
@@ -49,7 +49,7 @@ humansize = "2.1"
 url = "2.5"
 data-encoding = "2.9"
 home = { version = "0.5" }
-nex-packet = "0.24"
+nex-packet = "0.26"
 socket2 = { version = "0.5", features = ["all"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-native-certs = "0.7"
