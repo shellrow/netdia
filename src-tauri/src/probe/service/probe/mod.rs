@@ -115,24 +115,6 @@ pub struct ProbePayloadDb {
     pub probes: Vec<ProbePayload>,
 }
 
-/// Definition of a response signature for service identification
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ResponseSignature {
-    pub probe_id: String,
-    pub service: String,
-    pub regex: String,
-    pub regex_literal_tokens: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub cpe: Vec<String>,
-}
-
-/// Database of response signatures
-#[derive(Serialize, Deserialize)]
-pub struct ResponseSignaturesDb {
-    pub meta: Meta,
-    pub signatures: Vec<ResponseSignature>,
-}
-
 /// Definition of a port probe
 #[derive(Debug, Clone)]
 pub struct PortProbe {

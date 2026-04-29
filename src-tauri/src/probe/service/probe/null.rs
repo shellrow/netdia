@@ -2,11 +2,9 @@ use anyhow::{bail, Result};
 use std::net::SocketAddr;
 use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
 
-use crate::probe::service::db;
 use crate::probe::service::payload::{PayloadBuilder, PayloadContext};
 use crate::probe::service::probe::{PortProbeResult, ProbeContext};
 use crate::probe::service::read_timeout;
-use crate::probe::service::{build_regex, expand_cpe_templates};
 use crate::probe::service::{
     db::service::tcp_service_db, models::ServiceInfo, probe::ServiceProbe,
 };
@@ -66,29 +64,6 @@ fn parse_banner(bytes: &[u8], max_preview: usize) -> BannerLite {
     }
 }
 
-/// Match response text against known service signatures for tcp:NULL probes.
-/// (service, cpes)
-fn match_null_signatures(
-    probe_id: &str,
-    text: &str,
-) -> anyhow::Result<Option<(String, Vec<String>)>> {
-    let sigdb = db::service::response_signatures_db();
-    for sig in sigdb {
-        if !sig.probe_id.eq_ignore_ascii_case(probe_id) {
-            continue;
-        }
-        let re = match build_regex(&sig.regex, "") {
-            Ok(r) => r,
-            Err(_) => build_regex(&sig.regex, "i")?,
-        };
-        if let Some(caps) = re.captures(text) {
-            let cpes = expand_cpe_templates(&sig.cpe, &caps);
-            return Ok(Some((sig.service.clone(), cpes)));
-        }
-    }
-    Ok(None)
-}
-
 /// Probe implementation for tcp:null (no payload)
 pub struct NullProbe;
 
@@ -138,18 +113,10 @@ impl NullProbe {
             banner.first_line
         );
 
-        // Match signatures (tcp:NULL)
-        let hit = match_null_signatures("tcp:NULL", &banner.raw_text)?;
-
         // Construct service info
         let mut svc = ServiceInfo::default();
         let tcp_svc_db = tcp_service_db();
         svc.name = tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
-        if let Some((_service_name, cpes)) = hit {
-            if !cpes.is_empty() {
-                svc.cpes = cpes;
-            }
-        }
         // Even if name is still unknown, keep the banner
         svc.banner = banner.first_line.clone();
         svc.raw = Some(banner.raw_text);

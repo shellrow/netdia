@@ -16,6 +16,7 @@ pub enum PortScanProtocol {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum TargetPortsPreset {
     Common,
+    Top100,
     WellKnown,
     Full,
     Top1000,

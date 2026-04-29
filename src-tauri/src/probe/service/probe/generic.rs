@@ -1,9 +1,8 @@
-use crate::probe::service::db;
+use crate::probe::service::db::service::tcp_service_db;
 use crate::probe::service::models::ServiceInfo;
 use crate::probe::service::payload::{PayloadBuilder, PayloadContext};
 use crate::probe::service::probe::{PortProbeResult, ProbeContext};
 use crate::probe::service::read_timeout;
-use crate::probe::service::{build_regex, expand_cpe_templates};
 use anyhow::Result;
 use std::net::SocketAddr;
 use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
@@ -32,35 +31,6 @@ fn parse_banner(bytes: &[u8], max_preview: usize) -> BannerLite {
         first_line: (!first.is_empty()).then(|| first.to_string()),
         raw_text,
     }
-}
-
-/// Match response text against known service signatures.
-/// (service, cpes)
-fn match_signatures(probe_id: &str, text: &str) -> anyhow::Result<Option<(String, Vec<String>)>> {
-    let sigdb = db::service::response_signatures_db();
-    let mut best_service: String = String::new();
-    let mut cpes: Vec<String> = Vec::new();
-    for sig in sigdb {
-        if !sig.probe_id.eq_ignore_ascii_case(probe_id) {
-            continue;
-        }
-
-        let re = match build_regex(&sig.regex, "") {
-            Ok(r) => r,
-            Err(_) => build_regex(&sig.regex, "i")?,
-        };
-        if let Some(caps) = re.captures(text) {
-            if best_service.is_empty() && !sig.service.is_empty() {
-                best_service = sig.service.clone();
-            }
-            let cs = expand_cpe_templates(&sig.cpe, &caps);
-            if !cs.is_empty() {
-                cpes.extend(cs);
-                // Generic CPEs can have multiple candidates, so it's okay to continue collecting
-            }
-        }
-    }
-    Ok(Some((best_service, cpes)))
 }
 
 /// A generic probe that connects to a TCP port, optionally sends a payload, and reads the response.
@@ -105,17 +75,10 @@ impl GenericProbe {
             banner.first_line
         );
 
-        // Match signatures
-        let hit = match_signatures(ctx.probe.probe_id.as_str(), &banner.raw_text)?;
-
         // Build result
         let mut svc = ServiceInfo::default();
-        if let Some((service_name, cpes)) = hit {
-            svc.name = Some(service_name);
-            if !cpes.is_empty() {
-                svc.cpes = cpes;
-            }
-        }
+        let tcp_svc_db = tcp_service_db();
+        svc.name = tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
         // If name is still empty, keep banner
         svc.banner = banner.first_line.clone();
         svc.raw = Some(banner.raw_text);

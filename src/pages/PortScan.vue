@@ -1,9 +1,16 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from "vue";
+import {
+  ref,
+  reactive,
+  computed,
+  onMounted,
+  onBeforeUnmount,
+  watch,
+} from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
+import DataTable from "primevue/datatable";
+import Column from "primevue/column";
 import {
   PortScanProgress,
   PortScanProtocol,
@@ -94,19 +101,46 @@ async function refreshTargetPorts() {
 function serviceDetailText(s?: ServiceInfo | null): string {
   if (!s) return "-";
 
-  const cpes = (s.cpes ?? []).filter(Boolean);
-  if (cpes.length > 0) {
-    const shown = cpes.slice(0, 3).join(", ");
-    return cpes.length > 3 ? `${shown} (+${cpes.length - 3})` : shown;
-  }
+  const normalizeText = (value?: string | null): string =>
+    String(value ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
 
-  const banner = (s.banner ?? "").trim();
-  if (banner) return banner;
+  const summarizeTls = (): string | null => {
+    const tls = s.tls_info;
+    if (!tls) return null;
 
-  const raw = (s.raw ?? "").trim();
-  if (raw) return raw;
+    const parts = [
+      normalizeText(tls.version),
+      normalizeText(tls.alpn),
+      normalizeText(tls.cipher_suite),
+    ].filter(Boolean);
 
-  const parts = [s.product, s.version, s.name].filter((v) => !!v && String(v).trim().length > 0);
+    const subject = normalizeText(tls.subject);
+    if (subject) parts.push(`Subject: ${subject}`);
+
+    return parts.length > 0 ? parts.join(" | ") : null;
+  };
+
+  const banner = normalizeText(s.banner);
+  const product = normalizeText(s.product);
+  const version = normalizeText(s.version);
+  const raw = normalizeText(s.raw);
+  const tls = summarizeTls();
+
+  const details: string[] = [];
+  if (banner) details.push(banner);
+  if (product)
+    details.push(banner && product === banner ? "" : `Server: ${product}`);
+  if (!banner && version) details.push(version);
+  if (tls) details.push(`TLS: ${tls}`);
+
+  const compactDetails = details.filter(Boolean);
+  if (compactDetails.length > 0) return compactDetails.join(" | ");
+
+  if (raw) return raw.split(/\r?\n/, 1)[0]?.trim() || raw;
+
+  const parts = [product, version, normalizeText(s.name)].filter(Boolean);
   if (parts.length) return parts.join(" ");
 
   return "-";
@@ -210,12 +244,11 @@ let unlistenError: UnlistenFn | null = null;
 
 // Set up event listeners on mount
 onMounted(async () => {
-  
   // Initialize probe database
   initProbeDb();
 
   // Start event
-  unlistenStart = await listen("portscan:start", (ev:any) => {
+  unlistenStart = await listen("portscan:start", (ev: any) => {
     const runId: string | undefined = ev?.payload.run_id;
     if (runId) {
       activeRunId.value = runId;
@@ -239,17 +272,23 @@ onMounted(async () => {
     openOnly.value = [...openOnly.value, s];
   });
 
-  unlistenSvcStart = await listen("portscan:service_detection_start", (ev: any) => {
-    const runId = ev?.payload as string | undefined;
-    if (activeRunId.value && runId && runId !== activeRunId.value) return;
-    serviceDetecting.value = true;
-  });
+  unlistenSvcStart = await listen(
+    "portscan:service_detection_start",
+    (ev: any) => {
+      const runId = ev?.payload as string | undefined;
+      if (activeRunId.value && runId && runId !== activeRunId.value) return;
+      serviceDetecting.value = true;
+    },
+  );
 
-  unlistenSvcDone = await listen("portscan:service_detection_done", (ev: any) => {
-    const runId = ev?.payload as string | undefined;
-    if (activeRunId.value && runId && runId !== activeRunId.value) return;
-    serviceDetecting.value = false;
-  });
+  unlistenSvcDone = await listen(
+    "portscan:service_detection_done",
+    (ev: any) => {
+      const runId = ev?.payload as string | undefined;
+      if (activeRunId.value && runId && runId !== activeRunId.value) return;
+      serviceDetecting.value = false;
+    },
+  );
 
   // Done event
   unlistenDone = await listen("portscan:done", (ev: any) => {
@@ -261,7 +300,7 @@ onMounted(async () => {
     running.value = false;
   });
 
-  unlistenCancelled = await listen("portscan:cancelled", (ev:any) => {
+  unlistenCancelled = await listen("portscan:cancelled", (ev: any) => {
     const p = ev?.payload ?? {};
     const runId = p.run_id as string | undefined;
     if (activeRunId.value && runId && runId !== activeRunId.value) return;
@@ -273,7 +312,7 @@ onMounted(async () => {
     canceling.value = false;
   });
 
-  unlistenError = await listen("portscan:error", (ev:any) => {
+  unlistenError = await listen("portscan:error", (ev: any) => {
     const p = ev?.payload ?? {};
     const runId = p.run_id ?? p[0];
     const msg = p.message ?? p[1] ?? p;
@@ -344,6 +383,7 @@ onBeforeUnmount(() => {
             v-model="form.preset"
             :options="[
               { label: 'Common', value: 'Common' },
+              { label: 'Top 100', value: 'Top100' },
               { label: 'WellKnown', value: 'WellKnown' },
               { label: 'Top 1000', value: 'Top1000' },
               { label: 'Custom', value: 'Custom' },
@@ -383,7 +423,12 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="flex items-center gap-2 mb-2">
-          <Checkbox v-model="form.service_detection" :binary="true" inputId="service_detection" v-tooltip.bottom="`Enable service detection.`" />
+          <Checkbox
+            v-model="form.service_detection"
+            :binary="true"
+            inputId="service_detection"
+            v-tooltip.bottom="`Enable service detection.`"
+          />
           <label for="service_detection" class="text-sm">Service</label>
         </div>
 
@@ -431,9 +476,7 @@ onBeforeUnmount(() => {
                 class="flex items-center justify-between mb-2 text-sm text-surface-500"
               >
                 <div>Total: {{ progressTotal || "-" }}</div>
-                <div>
-                  Done: {{ progressDone }} / {{ progressTotal || "-" }}
-                </div>
+                <div>Done: {{ progressDone }} / {{ progressTotal || "-" }}</div>
               </div>
               <ProgressBar :value="progressPct" />
               <div class="mt-2 text-xs text-surface-500">
@@ -454,23 +497,19 @@ onBeforeUnmount(() => {
               >
                 <div>Open: {{ openCount }}</div>
               </div>
-              <div v-if="serviceDetecting" class="mb-2 text-xs text-surface-500 flex items-center gap-2">
+              <div
+                v-if="serviceDetecting"
+                class="mb-2 text-xs text-surface-500 flex items-center gap-2"
+              >
                 <i class="pi pi-spin pi-spinner"></i>
                 <span>Service detection in progress...</span>
               </div>
-              <div
-                v-if="report"
-                class="mt-1 text-xs text-surface-500"
-              >
+              <div v-if="report" class="mt-1 text-xs text-surface-500">
                 Completed {{ report.protocol.toUpperCase() }} scan for
-                <span
-                  v-if="report.hostname"
-                  class="font-mono"
-                >{{ `${report.hostname} (${report.ip_addr})` }}</span>
-                <span
-                  v-else
-                  class="font-mono"
-                >{{ `${report.ip_addr}` }}</span>
+                <span v-if="report.hostname" class="font-mono">{{
+                  `${report.hostname} (${report.ip_addr})`
+                }}</span>
+                <span v-else class="font-mono">{{ `${report.ip_addr}` }}</span>
               </div>
 
               <template v-if="openOnly.length">
@@ -493,29 +532,23 @@ onBeforeUnmount(() => {
                       style="width: 96px"
                       sortable
                     />
-                    <Column
-                      field="service_name"
-                      header="Service"
-                      sortable
-                    >
+                    <Column field="service_name" header="Service" sortable>
                       <template #body="{ data }">
                         <span class="font-mono">{{
                           data.service_name || "-"
                         }}</span>
                       </template>
                     </Column>
-                    <Column
-                      field="rtt_ms"
-                      header="RTT"
-                      sortable
-                    >
+                    <Column field="rtt_ms" header="RTT" sortable>
                       <template #body="{ data }">
                         {{ fmtMs(data.rtt_ms) }}
                       </template>
                     </Column>
-                    <Column header="Service Detail">
+                    <Column header="Banner Detail">
                       <template #body="{ data }">
-                        <span class="font-mono text-xs text-surface-600 dark:text-surface-300">
+                        <span
+                          class="font-mono text-xs text-surface-600 dark:text-surface-300"
+                        >
                           {{ serviceDetailText(data.service_info) }}
                         </span>
                       </template>

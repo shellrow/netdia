@@ -6,6 +6,16 @@ pub mod tcp;
 pub mod tuner;
 
 use crate::model::scan::TargetPortsPreset;
+use std::sync::OnceLock;
+
+static TOP_100_PORTS: OnceLock<Vec<u16>> = OnceLock::new();
+
+fn top_100_ports() -> &'static [u16] {
+    TOP_100_PORTS.get_or_init(|| {
+        serde_json::from_str(crate::resources::TOP_100_PORTS_JSON)
+            .expect("Invalid nd-top-100-ports.json format")
+    })
+}
 
 pub fn expand_ports(preset: &TargetPortsPreset, user_ports: &[u16]) -> Vec<u16> {
     match preset {
@@ -23,6 +33,13 @@ pub fn expand_ports(preset: &TargetPortsPreset, user_ports: &[u16]) -> Vec<u16> 
                 2376, 3306, 3389, 5432, 5800, 5900, 5901, 5984, 5985, 5986, 6379, 8000, 8008, 8080,
                 8081, 8088, 8443, 8888, 9000, 9090, 9200, 9300, 11211, 27017,
             ];
+            v.extend_from_slice(user_ports);
+            v.sort_unstable();
+            v.dedup();
+            v
+        }
+        TargetPortsPreset::Top100 => {
+            let mut v = top_100_ports().to_vec();
             v.extend_from_slice(user_ports);
             v.sort_unstable();
             v.dedup();

@@ -1,9 +1,6 @@
 use crate::{
     model::endpoint::Port,
-    probe::service::probe::{
-        PortProbeDb, ProbePayload, ProbePayloadDb, ResponseSignature, ResponseSignaturesDb,
-        ServiceProbe,
-    },
+    probe::service::probe::{PortProbeDb, ProbePayload, ProbePayloadDb, ServiceProbe},
 };
 use anyhow::Result;
 use ndb_tcp_service::TcpServiceDb;
@@ -14,7 +11,6 @@ pub static TCP_SERVICE_DB: OnceLock<TcpServiceDb> = OnceLock::new();
 pub static UDP_SERVICE_DB: OnceLock<UdpServiceDb> = OnceLock::new();
 pub static PORT_PROBE_DB: OnceLock<HashMap<Port, Vec<ServiceProbe>>> = OnceLock::new();
 pub static SERVICE_PROBE_DB: OnceLock<HashMap<ServiceProbe, ProbePayload>> = OnceLock::new();
-pub static RESPONSE_SIGNATURES_DB: OnceLock<Vec<ResponseSignature>> = OnceLock::new();
 
 /// Get a reference to the initialized TCP service database.
 pub fn tcp_service_db() -> &'static TcpServiceDb {
@@ -40,13 +36,6 @@ pub fn service_probe_db() -> &'static HashMap<ServiceProbe, ProbePayload> {
     SERVICE_PROBE_DB
         .get()
         .expect("SERVICE_PROBE_DB not initialized")
-}
-
-/// Get a reference to the initialized Response Signatures database.
-pub fn response_signatures_db() -> &'static Vec<ResponseSignature> {
-    RESPONSE_SIGNATURES_DB
-        .get()
-        .expect("RESPONSE_SIGNATURES_DB not initialized")
 }
 
 pub fn init_tcp_service_db() -> Result<()> {
@@ -101,16 +90,5 @@ pub fn init_service_probe_db() -> Result<()> {
     SERVICE_PROBE_DB
         .set(service_probe_map)
         .map_err(|_| anyhow::anyhow!("Failed to set SERVICE_PROBE_DB in OnceLock"))?;
-    Ok(())
-}
-
-/// Initialize Response Signatures database
-pub fn init_response_signatures_db() -> Result<()> {
-    let response_signatures_db: ResponseSignaturesDb =
-        serde_json::from_str(crate::resources::SERVICE_DB_JSON)
-            .expect("Invalid nd-service-db.json format");
-    RESPONSE_SIGNATURES_DB
-        .set(response_signatures_db.signatures)
-        .map_err(|_| anyhow::anyhow!("Failed to set RESPONSE_SIGNATURES_DB in OnceLock"))?;
     Ok(())
 }

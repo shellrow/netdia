@@ -10,9 +10,8 @@ use crate::model::scan::{
 
 use crate::operation::{OP_HOSTSCAN, OP_NEIGHBORSCAN, OP_PORTSCAN};
 use crate::probe::service::db::service::{
-    init_port_probe_db, init_response_signatures_db, init_service_probe_db, init_tcp_service_db,
-    init_udp_service_db, PORT_PROBE_DB, RESPONSE_SIGNATURES_DB, SERVICE_PROBE_DB, TCP_SERVICE_DB,
-    UDP_SERVICE_DB,
+    init_port_probe_db, init_service_probe_db, init_tcp_service_db, init_udp_service_db,
+    PORT_PROBE_DB, SERVICE_PROBE_DB, TCP_SERVICE_DB, UDP_SERVICE_DB,
 };
 use crate::probe::service::db::tls::{init_tls_oid_map, TLS_OID_MAP};
 
@@ -38,10 +37,6 @@ pub async fn init_probe_db() -> Result<(), String> {
 
     if SERVICE_PROBE_DB.get().is_none() {
         init_service_probe_db().map_err(|e| e.to_string())?;
-    }
-
-    if RESPONSE_SIGNATURES_DB.get().is_none() {
-        init_response_signatures_db().map_err(|e| e.to_string())?;
     }
 
     Ok(())
@@ -173,6 +168,7 @@ pub async fn get_target_ports(preset: String, user_ports: Vec<u16>) -> Vec<u16> 
     let preset_enum = match preset.as_str() {
         "Custom" => TargetPortsPreset::Custom,
         "Common" => TargetPortsPreset::Common,
+        "Top100" => TargetPortsPreset::Top100,
         "WellKnown" => TargetPortsPreset::WellKnown,
         "Top1000" => TargetPortsPreset::Top1000,
         "Full" => TargetPortsPreset::Full,
