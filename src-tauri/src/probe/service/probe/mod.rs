@@ -3,6 +3,7 @@ pub mod generic;
 pub mod http;
 pub mod null;
 pub mod quic;
+pub mod special;
 pub mod tls;
 
 use super::models::ServiceInfo;
@@ -27,6 +28,18 @@ pub enum ServiceProbe {
     TcpHTTPOptions,
     TcpDNSVersionBindReq,
     TcpHelp,
+    TcpImapCapability,
+    TcpMssqlPrelogin,
+    TcpMemcachedVersion,
+    TcpMqttConnect,
+    TcpMySqlHandshake,
+    TcpOracleTns,
+    TcpPop3Capa,
+    TcpPostgresSslReq,
+    TcpRedisPing,
+    TcpRdpNegotiation,
+    TcpSmbNegotiation,
+    TcpSmtpEhlo,
     TcpTlsSession,
     UdpDNSVersionBindReq,
     UdpQuic,
@@ -43,6 +56,18 @@ impl ServiceProbe {
             ServiceProbe::TcpHTTPOptions => "tcp:http_options",
             ServiceProbe::TcpDNSVersionBindReq => "tcp:dns_version_bind_req",
             ServiceProbe::TcpHelp => "tcp:help",
+            ServiceProbe::TcpImapCapability => "tcp:imap_capability",
+            ServiceProbe::TcpMssqlPrelogin => "tcp:mssql_prelogin",
+            ServiceProbe::TcpMemcachedVersion => "tcp:memcached_version",
+            ServiceProbe::TcpMqttConnect => "tcp:mqtt_connect",
+            ServiceProbe::TcpMySqlHandshake => "tcp:mysql_handshake",
+            ServiceProbe::TcpOracleTns => "tcp:oracle_tns",
+            ServiceProbe::TcpPop3Capa => "tcp:pop3_capa",
+            ServiceProbe::TcpPostgresSslReq => "tcp:postgres_sslreq",
+            ServiceProbe::TcpRedisPing => "tcp:redis_ping",
+            ServiceProbe::TcpRdpNegotiation => "tcp:rdp_negotiation",
+            ServiceProbe::TcpSmbNegotiation => "tcp:smb_negotiation",
+            ServiceProbe::TcpSmtpEhlo => "tcp:smtp_ehlo",
             ServiceProbe::TcpTlsSession => "tcp:tls_session",
             ServiceProbe::UdpDNSVersionBindReq => "udp:dns_version_bind_req",
             ServiceProbe::UdpQuic => "udp:quic",
@@ -58,6 +83,18 @@ impl ServiceProbe {
             "tcp:http_options" => Some(ServiceProbe::TcpHTTPOptions),
             "tcp:dns_version_bind_req" => Some(ServiceProbe::TcpDNSVersionBindReq),
             "tcp:help" => Some(ServiceProbe::TcpHelp),
+            "tcp:imap_capability" => Some(ServiceProbe::TcpImapCapability),
+            "tcp:mssql_prelogin" => Some(ServiceProbe::TcpMssqlPrelogin),
+            "tcp:memcached_version" => Some(ServiceProbe::TcpMemcachedVersion),
+            "tcp:mqtt_connect" => Some(ServiceProbe::TcpMqttConnect),
+            "tcp:mysql_handshake" => Some(ServiceProbe::TcpMySqlHandshake),
+            "tcp:oracle_tns" => Some(ServiceProbe::TcpOracleTns),
+            "tcp:pop3_capa" => Some(ServiceProbe::TcpPop3Capa),
+            "tcp:postgres_sslreq" => Some(ServiceProbe::TcpPostgresSslReq),
+            "tcp:redis_ping" => Some(ServiceProbe::TcpRedisPing),
+            "tcp:rdp_negotiation" => Some(ServiceProbe::TcpRdpNegotiation),
+            "tcp:smb_negotiation" => Some(ServiceProbe::TcpSmbNegotiation),
+            "tcp:smtp_ehlo" => Some(ServiceProbe::TcpSmtpEhlo),
             "tcp:tls_session" => Some(ServiceProbe::TcpTlsSession),
             "udp:dns_version_bind_req" => Some(ServiceProbe::UdpDNSVersionBindReq),
             "udp:quic" => Some(ServiceProbe::UdpQuic),
@@ -74,6 +111,18 @@ impl ServiceProbe {
             | ServiceProbe::TcpHTTPOptions
             | ServiceProbe::TcpDNSVersionBindReq
             | ServiceProbe::TcpHelp
+            | ServiceProbe::TcpImapCapability
+            | ServiceProbe::TcpMssqlPrelogin
+            | ServiceProbe::TcpMemcachedVersion
+            | ServiceProbe::TcpMqttConnect
+            | ServiceProbe::TcpMySqlHandshake
+            | ServiceProbe::TcpOracleTns
+            | ServiceProbe::TcpPop3Capa
+            | ServiceProbe::TcpPostgresSslReq
+            | ServiceProbe::TcpRedisPing
+            | ServiceProbe::TcpRdpNegotiation
+            | ServiceProbe::TcpSmbNegotiation
+            | ServiceProbe::TcpSmtpEhlo
             | ServiceProbe::TcpTlsSession => TransportProtocol::Tcp,
             ServiceProbe::UdpDNSVersionBindReq | ServiceProbe::UdpQuic => TransportProtocol::Udp,
         }

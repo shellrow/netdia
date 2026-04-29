@@ -108,6 +108,20 @@ impl ServiceDetector {
                             | ServiceProbe::TcpHTTPOptions => {
                                 probe::http::HttpProbe::run(ctx).await
                             }
+                            ServiceProbe::TcpImapCapability
+                            | ServiceProbe::TcpMssqlPrelogin
+                            | ServiceProbe::TcpMemcachedVersion
+                            | ServiceProbe::TcpMqttConnect
+                            | ServiceProbe::TcpMySqlHandshake
+                            | ServiceProbe::TcpOracleTns
+                            | ServiceProbe::TcpPop3Capa
+                            | ServiceProbe::TcpPostgresSslReq
+                            | ServiceProbe::TcpRedisPing
+                            | ServiceProbe::TcpRdpNegotiation
+                            | ServiceProbe::TcpSmbNegotiation
+                            | ServiceProbe::TcpSmtpEhlo => {
+                                probe::special::SpecialTcpProbe::run(ctx).await
+                            }
                             ServiceProbe::TcpTlsSession => probe::tls::TlsProbe::run(ctx).await,
                             ServiceProbe::TcpGenericLines | ServiceProbe::TcpHelp => {
                                 probe::generic::GenericProbe::run(ctx).await

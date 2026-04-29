@@ -19,6 +19,7 @@
       "tcp:generic_lines"
     ],
     "25": [
+      "tcp:smtp_ehlo",
       "tcp:help"
     ],
     "35": [
@@ -71,6 +72,7 @@
       "tcp:generic_lines"
     ],
     "110": [
+      "tcp:pop3_capa",
       "tcp:generic_lines"
     ],
     "113": [
@@ -89,7 +91,7 @@
       "tcp:http_get"
     ],
     "143": [
-      "tcp:http_get"
+      "tcp:imap_capability"
     ],
     "199": [
       "tcp:generic_lines"
@@ -122,6 +124,9 @@
     ],
     "444": [
       "tcp:tls_session"
+    ],
+    "445": [
+      "tcp:smb_negotiation"
     ],
     "448": [
       "tcp:tls_session"
@@ -326,6 +331,15 @@
     "1432": [
       "tcp:generic_lines"
     ],
+    "1433": [
+      "tcp:mssql_prelogin"
+    ],
+    "1521": [
+      "tcp:oracle_tns"
+    ],
+    "1883": [
+      "tcp:mqtt_connect"
+    ],
     "1443": [
       "tcp:tls_session",
       "tcp:https_get"
@@ -475,7 +489,11 @@
       "tcp:tls_session"
     ],
     "3389": [
+      "tcp:rdp_negotiation",
       "tcp:tls_session"
+    ],
+    "3306": [
+      "tcp:mysql_handshake"
     ],
     "3443": [
       "tcp:tls_session"
@@ -561,8 +579,19 @@
       "tcp:http_get"
     ],
     "5432": [
-      "tcp:generic_lines",
-      "tcp:http_get"
+      "tcp:postgres_sslreq"
+    ],
+    "6379": [
+      "tcp:redis_ping"
+    ],
+    "11211": [
+      "tcp:memcached_version"
+    ],
+    "2483": [
+      "tcp:oracle_tns"
+    ],
+    "2484": [
+      "tcp:oracle_tns"
     ],
     "5443": [
       "tcp:tls_session",
