@@ -116,6 +116,11 @@ export interface PortScanSetting {
   service_detection: boolean;
 }
 
+export interface PortInputPreview {
+  user_ports: number[];
+  target_ports: number[];
+}
+
 export type HostState = "Alive" | "Unreachable";
 
 export interface HostScanStartPayload {
@@ -162,6 +167,12 @@ export interface HostScanRequest {
   payload?: string | null;
   ordered: boolean;
   concurrency?: number | null;
+}
+
+export interface HostScanTargetPreview {
+  targets: string[];
+  estimated_count: number;
+  exceeds_limit: boolean;
 }
 
 export interface NeighborScanStartPayload {

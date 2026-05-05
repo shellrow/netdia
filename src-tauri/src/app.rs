@@ -198,6 +198,8 @@ pub fn run() {
             command::ping::ping,
             command::ping::cancel_ping,
             command::scan::get_target_ports,
+            command::scan::preview_port_input,
+            command::scan::preview_host_scan_targets,
             command::scan::port_scan,
             command::scan::cancel_portscan,
             command::scan::host_scan,

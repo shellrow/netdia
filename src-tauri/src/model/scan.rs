@@ -23,6 +23,20 @@ pub enum TargetPortsPreset {
     Custom,
 }
 
+impl TargetPortsPreset {
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "Custom" => TargetPortsPreset::Custom,
+            "Common" => TargetPortsPreset::Common,
+            "Top100" => TargetPortsPreset::Top100,
+            "WellKnown" => TargetPortsPreset::WellKnown,
+            "Top1000" => TargetPortsPreset::Top1000,
+            "Full" => TargetPortsPreset::Full,
+            _ => TargetPortsPreset::Common,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum PortState {
     Open,
@@ -87,6 +101,12 @@ pub struct PortScanSetting {
     pub timeout_ms: u64,
     pub ordered: bool,
     pub service_detection: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PortInputPreview {
+    pub user_ports: Vec<u16>,
+    pub target_ports: Vec<u16>,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -201,6 +221,13 @@ pub struct HostScanRequest {
     pub payload: Option<String>,
     pub ordered: bool,
     pub concurrency: Option<usize>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HostScanTargetPreview {
+    pub targets: Vec<String>,
+    pub estimated_count: usize,
+    pub exceeds_limit: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

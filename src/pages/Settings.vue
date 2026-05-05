@@ -1,19 +1,23 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { getVersion as getAppVersion } from "@tauri-apps/api/app";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { AppConfig } from "../types/config";
 import { useTheme } from "../composables/useTheme";
-import { normalizeBpsUnit, readBpsUnit } from "../utils/preferences";
 import { INTERNET_CHECK_INTERVAL } from "../constants/defaults";
-import { STORAGE_KEYS } from "../constants/storage";
 import { clampInt } from "../utils/numeric";
 import { useUpdater } from "../composables/useUpdater";
 import { fmtBytes } from "../utils/formatter";
+import { useAppConfig } from "../composables/useAppConfig";
+import { invoke } from "@tauri-apps/api/core";
 
 const { themeMode, setSystemTheme, setLightTheme, setDarkTheme } = useTheme();
 const updater = useUpdater();
+const {
+  config: sharedConfig,
+  loadAppConfig,
+  saveAppConfig,
+} = useAppConfig();
 
 type SectionKey = "general" | "appearance" | "app";
 type Section = { key: SectionKey; label: string; icon: string; desc?: string };
@@ -33,9 +37,7 @@ const activeColor = "bg-surface-50 dark:bg-surface-800 text-surface-900 dark:tex
 const itemClass = (active: boolean) => `${baseItem} ${active ? activeColor : idleColor}`;
 
 // Tauri app config
-const cfg = ref<AppConfig | null>(null);
-const loading = ref(false);
-const saving  = ref(false);
+const cfg = computed(() => sharedConfig.value);
 const theme = computed<"system" | "light" | "dark">({
   get: () => themeMode.value,
   set: (v) => {
@@ -44,32 +46,11 @@ const theme = computed<"system" | "light" | "dark">({
     else setDarkTheme();
   },
 });
-const refreshMs   = ref<number>(parseInt(localStorage.getItem(STORAGE_KEYS.REFRESH_INTERVAL_MS) || "1000", 10));
-const bpsUnit     = ref<"bytes"|"bits">(readBpsUnit(localStorage));
+const refreshMs = ref<number>(1000);
+const bpsUnit = ref<"bytes" | "bits">("bits");
+const autoInternetCheck = ref<boolean>(true);
+const autoInternetCheckIntervalS = ref<number>(INTERNET_CHECK_INTERVAL.DEFAULT);
 
-// --- Internet check settings ---
-function readAutoInternetCheck(): boolean {
-  const v = localStorage.getItem(STORAGE_KEYS.AUTO_INTERNET_CHECK);
-  if (v == null) return true;
-  return v === "1" || v.toLowerCase() === "true";
-}
-
-function readAutoInternetCheckIntervalS(): number {
-  const raw = localStorage.getItem(STORAGE_KEYS.AUTO_INTERNET_CHECK_INTERVAL_S);
-  if (raw == null || raw.trim() === "") return INTERNET_CHECK_INTERVAL.DEFAULT;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return INTERNET_CHECK_INTERVAL.DEFAULT;
-  return clampInt(Math.floor(n), INTERNET_CHECK_INTERVAL.MIN, INTERNET_CHECK_INTERVAL.MAX);
-}
-
-const autoInternetCheck = ref<boolean>(readAutoInternetCheck());
-const autoInternetCheckIntervalS = ref<number>(readAutoInternetCheckIntervalS());
-
-watch(theme,     v => localStorage.setItem(STORAGE_KEYS.THEME,     v));
-watch(refreshMs, v => localStorage.setItem(STORAGE_KEYS.REFRESH_INTERVAL_MS,   String(v)));
-watch(bpsUnit,   v => localStorage.setItem(STORAGE_KEYS.BPS_UNIT,   v));
-
-watch(autoInternetCheck, v => localStorage.setItem(STORAGE_KEYS.AUTO_INTERNET_CHECK, v ? "1" : "0"));
 watch(autoInternetCheckIntervalS, (v) => {
   const n = Number(v);
   const next = Number.isFinite(n)
@@ -78,60 +59,48 @@ watch(autoInternetCheckIntervalS, (v) => {
 
   if (next !== autoInternetCheckIntervalS.value) {
     autoInternetCheckIntervalS.value = next;
-    return;
   }
-
-  localStorage.setItem(
-    STORAGE_KEYS.AUTO_INTERNET_CHECK_INTERVAL_S,
-    String(next),
-  );
 });
 
 function applyFromConfig(c: AppConfig) {
+  suspendAutosave = true;
   theme.value     = c.theme;
   refreshMs.value = c.refresh_interval_ms;
-  bpsUnit.value   = normalizeBpsUnit(c.data_unit);
+  bpsUnit.value   = c.data_unit;
 
   autoInternetCheck.value = !!c.auto_internet_check;
   autoInternetCheckIntervalS.value = clampInt(Math.floor(c.auto_internet_check_interval_s ?? INTERNET_CHECK_INTERVAL.DEFAULT), INTERNET_CHECK_INTERVAL.MIN, INTERNET_CHECK_INTERVAL.MAX);
+  window.setTimeout(() => {
+    suspendAutosave = false;
+  }, 0);
 }
 
 async function loadConfig() {
-  loading.value = true;
-  try {
-    const c = await invoke<AppConfig>("get_config");
-    cfg.value = c;
-    applyFromConfig(c);
-  } finally {
-    loading.value = false;
-  }
+  const c = await loadAppConfig();
+  applyFromConfig(c);
 }
 
 let saveTimer: number | null = null;
+let suspendAutosave = false;
 function scheduleSave() {
+  if (suspendAutosave) return;
   if (saveTimer) window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(saveConfig, 350);
 }
 
 async function saveConfig() {
   if (!cfg.value) return;
-  saving.value = true;
-  try {
-    const next: AppConfig = {
-      ...cfg.value,
-      startup: false,
-      theme: theme.value,
-      refresh_interval_ms: refreshMs.value,
-      data_unit: bpsUnit.value,
-      logging: cfg.value.logging,
-      auto_internet_check: autoInternetCheck.value,
-      auto_internet_check_interval_s: clampInt(Math.floor(autoInternetCheckIntervalS.value), INTERNET_CHECK_INTERVAL.MIN, INTERNET_CHECK_INTERVAL.MAX),
-    };
-    await invoke("save_config", { cfg: next });
-    cfg.value = next;
-  } finally {
-    saving.value = false;
-  }
+  const next: AppConfig = {
+    ...cfg.value,
+    startup: false,
+    theme: theme.value,
+    refresh_interval_ms: refreshMs.value,
+    data_unit: bpsUnit.value,
+    logging: cfg.value.logging,
+    auto_internet_check: autoInternetCheck.value,
+    auto_internet_check_interval_s: clampInt(Math.floor(autoInternetCheckIntervalS.value), INTERNET_CHECK_INTERVAL.MIN, INTERNET_CHECK_INTERVAL.MAX),
+  };
+  await saveAppConfig(next);
 }
 
 type LogsPath = { folder: string; file?: string | null };
@@ -158,6 +127,16 @@ async function openLogsFolder() {
 }
 
 watch([theme, refreshMs, bpsUnit, autoInternetCheck, autoInternetCheckIntervalS], scheduleSave, { deep: false });
+
+watch(
+  cfg,
+  (next) => {
+    if (next) {
+      applyFromConfig(next);
+    }
+  },
+  { deep: true },
+);
 
 // Updater
 const appVersion = ref<string>("");

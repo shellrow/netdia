@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import Chart from 'primevue/chart';
 import type { ChartData, ChartOptions } from "chart.js";
 import Timeline from 'primevue/timeline';
@@ -11,27 +10,28 @@ import { fmtIfType, severityByOper, fmtBps, fmtBytesPerSec, fmtBytes } from "../
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
 import { usePrivacyGate } from "../composables/usePrivacyGate";
 import { hexToRgba } from "../utils/color";
-import { DEFAULT_AUTO_INTERNET_CHECK, INTERNET_CHECK_INTERVAL } from "../constants/defaults";
-import { STORAGE_KEYS } from "../constants/storage";
-import { readBpsUnit, type UnitPref } from "../utils/preferences";
 import { useRouter } from "vue-router";
 import type { IpInfoDual } from "../types/internet";
-import { clampInt } from "../utils/numeric";
+import { useAppConfig } from "../composables/useAppConfig";
+import { useInterfacesState } from "../composables/useInterfacesState";
 
 // @ts-ignore -- used in template refs
 const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
 const { publicIpVisible, togglePublicIp, pubIpGate, hostnameVisible, toggleHostname } =
   usePrivacyGate();
+const {
+  bpsUnit,
+  autoInternetCheck,
+  autoInternetCheckIntervalS,
+  patchAppConfig,
+} = useAppConfig();
+const {
+  interfaces: ifaces,
+  ensureInterfacesState,
+} = useInterfacesState();
 
 const loading = ref(false);
-const ifaces = ref<NetworkInterface[]>([]);
 const sys = ref<SysInfo | null>(null);
-
-const bpsUnit = ref<UnitPref>(readBpsUnit(localStorage));
-
-function refreshUnitPref() {
-  bpsUnit.value = readBpsUnit(localStorage);
-}
 const rxLabel = computed(() =>
   bpsUnit.value === "bits" ? "RX bps" : "RX B/s",
 );
@@ -289,14 +289,7 @@ function fmtStat(v?: number) {
 // Data Fetching
 
 async function fetchInterfaces() {
-  try {
-    const data = (await invoke(
-      "get_network_interfaces",
-    )) as NetworkInterface[];
-    ifaces.value = data;
-  } finally {
-    /* noop */
-  }
+  await ensureInterfacesState();
 }
 
 async function fetchSysInfo() {
@@ -311,43 +304,8 @@ async function fetchSysInfo() {
 async function fetchAll() {
   loading.value = true;
   try {
-    const [ifs, si] = await Promise.all([
-      invoke("get_network_interfaces") as Promise<NetworkInterface[]>,
-      invoke("get_sys_info") as Promise<SysInfo>,
-    ]);
-    ifaces.value = ifs ?? [];
-    sys.value = si ?? null;
-
+    await Promise.all([fetchInterfaces(), fetchSysInfo()]);
     refreshTrafficLabels();
-    pushTrafficSample();
-  } finally {
-    loading.value = false;
-  }
-}
-
-let unlistenStats: UnlistenFn | null = null;
-let unlistenIfaces: UnlistenFn | null = null;
-let debouncing = false;
-
-async function onStatsUpdated() {
-  // Debounce to avoid excessive refreshes when stats are frequent
-  if (debouncing) return;
-  debouncing = true;
-  setTimeout(async () => {
-    refreshUnitPref();
-    await fetchInterfaces();
-    pushTrafficSample();
-    debouncing = false;
-  }, 500);
-}
-
-async function onInterfacesUpdated() {
-  loading.value = true;
-  try {
-    refreshUnitPref();
-    await fetchInterfaces();
-    await fetchSysInfo();
-    // When the IF configuration itself changes, update the sample once
     pushTrafficSample();
   } finally {
     loading.value = false;
@@ -360,43 +318,6 @@ function togglePrivacy() {
 }
 
 // --- Internet Reachability ---
-function readAutoInternetCheckIntervalS(ls: Storage): number {
-  const raw = ls.getItem(STORAGE_KEYS.AUTO_INTERNET_CHECK_INTERVAL_S);
-  if (raw == null || raw.trim() === "") return INTERNET_CHECK_INTERVAL.DEFAULT;
-
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return INTERNET_CHECK_INTERVAL.DEFAULT;
-
-  return clampInt(
-    Math.floor(n),
-    INTERNET_CHECK_INTERVAL.MIN,
-    INTERNET_CHECK_INTERVAL.MAX,
-  );
-}
-
-function readAutoInternetCheck(ls: Storage): boolean {
-  const v = ls.getItem(STORAGE_KEYS.AUTO_INTERNET_CHECK);
-  if (v == null) return DEFAULT_AUTO_INTERNET_CHECK;
-  return v === "1" || v.toLowerCase() === "true";
-}
-
-function writeAutoInternetCheck(ls: Storage, enabled: boolean) {
-  ls.setItem(STORAGE_KEYS.AUTO_INTERNET_CHECK, enabled ? "1" : "0");
-}
-
-const autoInternetCheck = ref<boolean>(readAutoInternetCheck(localStorage));
-const autoInternetCheckIntervalS = ref<number>(
-  readAutoInternetCheckIntervalS(localStorage),
-);
-
-function refreshAutoInternetCheckIntervalPref() {
-  autoInternetCheckIntervalS.value = readAutoInternetCheckIntervalS(localStorage);
-}
-
-function refreshAutoInternetCheckPref() {
-  autoInternetCheck.value = readAutoInternetCheck(localStorage);
-}
-
 function startIpInfoTimer(manual: boolean = false) {
   if (ipInfoTimer) clearInterval(ipInfoTimer);
   if (!autoInternetCheck.value) {
@@ -408,11 +329,11 @@ function startIpInfoTimer(manual: boolean = false) {
   ipInfoTimer = window.setInterval(() => refreshIpInfo(false), intervalMs);
 }
 
-function toggleAutoInternetCheck() {
+async function toggleAutoInternetCheck() {
   const prev = autoInternetCheck.value;
-  autoInternetCheck.value = !prev;
-  writeAutoInternetCheck(localStorage, autoInternetCheck.value);
-  startIpInfoTimer(!prev && autoInternetCheck.value);
+  const next = !prev;
+  await patchAppConfig({ auto_internet_check: next });
+  startIpInfoTimer(!prev && next);
 }
 
 // --- Public IP / Reachability ---
@@ -635,49 +556,50 @@ function onPathNodeClick(node: PathNode) {
   node.onClick?.();
 }
 
-const onStorage = () => {
-  refreshUnitPref();
-  const prevEnabled = autoInternetCheck.value;
-  const prevInterval = autoInternetCheckIntervalS.value;
-
-  refreshAutoInternetCheckPref();
-  refreshAutoInternetCheckIntervalPref();
-
-  if (autoInternetCheck.value) {
-    const enabledChanged = prevEnabled !== autoInternetCheck.value;
-    const intervalChanged = prevInterval !== autoInternetCheckIntervalS.value;
-    if (enabledChanged || intervalChanged) startIpInfoTimer(false);
-  } else {
-    if (ipInfoTimer) {
-      clearInterval(ipInfoTimer);
-      ipInfoTimer = null;
-    }
-  }
-};
-
 onMounted(async () => {
   initTrafficChart();
-  refreshUnitPref();
-  await fetchAll();
-
-  unlistenStats = await listen("stats_updated", onStatsUpdated);
-  unlistenIfaces = await listen("interfaces_updated", onInterfacesUpdated);
-  window.addEventListener("storage", onStorage);
+  await Promise.all([ensureInterfacesState(), fetchSysInfo()]);
+  refreshTrafficLabels();
+  pushTrafficSample();
 
   startIpInfoTimer();
 });
 
 onBeforeUnmount(() => {
-  unlistenStats?.();
-  unlistenIfaces?.();
-  window.removeEventListener("storage", onStorage);
-
   if (ipInfoTimer) {
     clearInterval(ipInfoTimer);
     ipInfoTimer = null;
   }
 
 });
+
+watch(ifaces, () => {
+  refreshTrafficLabels();
+  pushTrafficSample();
+});
+
+watch(
+  () => autoInternetCheckIntervalS.value,
+  () => {
+    if (autoInternetCheck.value) {
+      startIpInfoTimer(false);
+    }
+  },
+);
+
+watch(
+  () => autoInternetCheck.value,
+  (enabled) => {
+    if (!enabled && ipInfoTimer) {
+      clearInterval(ipInfoTimer);
+      ipInfoTimer = null;
+      return;
+    }
+    if (enabled) {
+      startIpInfoTimer(false);
+    }
+  },
+);
 </script>
 
 <style scoped>

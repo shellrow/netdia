@@ -12,6 +12,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
 import {
+  PortInputPreview,
   PortScanProgress,
   PortScanProtocol,
   PortScanReport,
@@ -54,31 +55,6 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
 const targetPorts = ref<number[]>([]);
 const targetCount = computed(() => targetPorts.value.length);
 
-// Parse user-specified ports: "80,443,1000-1010"
-function parseUserPorts(text: string): number[] {
-  const out: number[] = [];
-  for (const part of text
-    .split(/[,\s]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)) {
-    if (/^\d+$/.test(part)) {
-      const p = Number(part);
-      if (p >= 1 && p <= 65535) out.push(p);
-      continue;
-    }
-    const m = part.match(/^(\d+)-(\d+)$/);
-    if (m) {
-      let a = Number(m[1]),
-        b = Number(m[2]);
-      if (a > b) [a, b] = [b, a];
-      for (let p = a; p <= b; p++) {
-        if (p >= 1 && p <= 65535) out.push(p);
-      }
-    }
-  }
-  return Array.from(new Set(out)).sort((a, b) => a - b);
-}
-
 async function resolveTarget(target: string): Promise<Host> {
   const host: Host = await invoke("lookup_host", { host: target });
   return host;
@@ -86,12 +62,11 @@ async function resolveTarget(target: string): Promise<Host> {
 
 async function refreshTargetPorts() {
   try {
-    const userPorts = parseUserPorts(form.userPortsText);
-    const ports = await invoke<number[]>("get_target_ports", {
+    const preview = await invoke<PortInputPreview>("preview_port_input", {
       preset: form.preset,
-      userPorts,
+      userPortsText: form.userPortsText,
     });
-    targetPorts.value = ports ?? [];
+    targetPorts.value = preview.target_ports ?? [];
   } catch (e) {
     targetPorts.value = [];
     err.value = String(e);
@@ -163,11 +138,15 @@ watch(
 
 async function toSetting(): Promise<PortScanSetting> {
   const target = await resolveTarget(form.host);
+  const preview = await invoke<PortInputPreview>("preview_port_input", {
+    preset: form.preset,
+    userPortsText: form.userPortsText,
+  });
   return {
     ip_addr: target.ip,
     hostname: target.hostname,
     target_ports_preset: form.preset,
-    user_ports: parseUserPorts(form.userPortsText),
+    user_ports: preview.user_ports,
     protocol: form.protocol,
     timeout_ms: form.timeout_ms,
     ordered: form.ordered,

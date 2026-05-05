@@ -4,8 +4,8 @@ use netdev::Interface;
 use tauri::{AppHandle, Emitter};
 
 use crate::model::scan::{
-    HostScanReport, HostScanRequest, HostScanSetting, PortScanProtocol, PortScanReport,
-    PortScanSetting, TargetPortsPreset,
+    HostScanReport, HostScanRequest, HostScanSetting, HostScanTargetPreview, PortInputPreview,
+    PortScanProtocol, PortScanReport, PortScanSetting, TargetPortsPreset,
 };
 
 use crate::operation::{OP_HOSTSCAN, OP_NEIGHBORSCAN, OP_PORTSCAN};
@@ -165,14 +165,126 @@ pub async fn cancel_neighborscan() -> bool {
 
 #[tauri::command]
 pub async fn get_target_ports(preset: String, user_ports: Vec<u16>) -> Vec<u16> {
-    let preset_enum = match preset.as_str() {
-        "Custom" => TargetPortsPreset::Custom,
-        "Common" => TargetPortsPreset::Common,
-        "Top100" => TargetPortsPreset::Top100,
-        "WellKnown" => TargetPortsPreset::WellKnown,
-        "Top1000" => TargetPortsPreset::Top1000,
-        "Full" => TargetPortsPreset::Full,
-        _ => TargetPortsPreset::Common,
-    };
+    let preset_enum = TargetPortsPreset::from_str(&preset);
     crate::probe::scan::expand_ports(&preset_enum, &user_ports)
+}
+
+fn parse_user_ports(text: &str) -> Vec<u16> {
+    let mut out = Vec::new();
+
+    for part in text
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if let Ok(port) = part.parse::<u16>() {
+            if (1..=65535).contains(&port) {
+                out.push(port);
+            }
+            continue;
+        }
+
+        if let Some((lhs, rhs)) = part.split_once('-') {
+            let Ok(mut start) = lhs.trim().parse::<u16>() else {
+                continue;
+            };
+            let Ok(mut end) = rhs.trim().parse::<u16>() else {
+                continue;
+            };
+
+            if start > end {
+                std::mem::swap(&mut start, &mut end);
+            }
+
+            for port in start..=end {
+                if (1..=65535).contains(&port) {
+                    out.push(port);
+                }
+            }
+        }
+    }
+
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+fn estimate_ipv4_hosts(cidr: &str) -> Option<usize> {
+    let net = cidr.trim().parse::<netdev::ipnet::Ipv4Net>().ok()?;
+    let prefix = net.prefix_len();
+    let size = 1usize.checked_shl(u32::from(32u8.saturating_sub(prefix)))?;
+
+    Some(if prefix <= 30 {
+        size.saturating_sub(2)
+    } else {
+        size
+    })
+}
+
+fn expand_ipv4_cidr(cidr: &str, max: usize) -> Option<Vec<String>> {
+    let net = cidr.trim().parse::<netdev::ipnet::Ipv4Net>().ok()?;
+    let total = estimate_ipv4_hosts(cidr)?;
+    if total == 0 || total > max {
+        return None;
+    }
+
+    Some(net.hosts().map(|ip| ip.to_string()).collect())
+}
+
+fn parse_target_list(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = text
+        .split(|c: char| c.is_whitespace() || c == ',' || c == ';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[tauri::command]
+pub async fn preview_port_input(preset: String, user_ports_text: String) -> PortInputPreview {
+    let user_ports = parse_user_ports(&user_ports_text);
+    let preset_enum = TargetPortsPreset::from_str(&preset);
+    let target_ports = crate::probe::scan::expand_ports(&preset_enum, &user_ports);
+
+    PortInputPreview {
+        user_ports,
+        target_ports,
+    }
+}
+
+#[tauri::command]
+pub async fn preview_host_scan_targets(
+    mode: String,
+    cidr: String,
+    list: String,
+    max_expand: usize,
+) -> HostScanTargetPreview {
+    match mode.as_str() {
+        "cidr" => {
+            let estimated_count = estimate_ipv4_hosts(&cidr).unwrap_or(0);
+            let exceeds_limit = estimated_count > max_expand;
+            let targets = if exceeds_limit {
+                Vec::new()
+            } else {
+                expand_ipv4_cidr(&cidr, max_expand).unwrap_or_default()
+            };
+
+            HostScanTargetPreview {
+                targets,
+                estimated_count,
+                exceeds_limit,
+            }
+        }
+        _ => {
+            let targets = parse_target_list(&list);
+            HostScanTargetPreview {
+                estimated_count: targets.len(),
+                exceeds_limit: false,
+                targets,
+            }
+        }
+    }
 }
