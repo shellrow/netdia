@@ -30,8 +30,10 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
 // Speed Test
 type Direction = "download" | "upload";
 type Result = "full" | "timeout" | "canceled" | "error";
+type SpeedtestServer = "cloudflare" | "foctal";
 
 const speedDirection = ref<Direction>("download");
+const speedtestServer = ref<SpeedtestServer>("foctal");
 
 const sizeOptions = ref([
   { label: "100 KB", bytes: 100 * 1024 },
@@ -103,7 +105,7 @@ async function startSpeedtest() {
 
     latencyRunning.value = true;
     try {
-      await invoke("measure_latency");
+      await invoke("measure_latency", { server: speedtestServer.value });
     } catch {
       latencyRunning.value = false;
       latencyMs.value = null;
@@ -115,6 +117,7 @@ async function startSpeedtest() {
     const dir = speedDirection.value ?? "download";
 
     const setting = {
+      server: speedtestServer.value,
       direction: dir,
       target_bytes: size,
       max_duration_ms: maxDurationMs,
@@ -184,6 +187,9 @@ let unlistenUpdate: UnlistenFn | null = null;
 let unlistenDone: UnlistenFn | null = null;
 
 watch(speedDirection, () => {
+  if (!stRunning.value) resetSpeedtestUi();
+});
+watch(speedtestServer, () => {
   if (!stRunning.value) resetSpeedtestUi();
 });
 watch(selectedSize, () => {

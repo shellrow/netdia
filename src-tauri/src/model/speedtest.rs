@@ -7,6 +7,13 @@ pub enum SpeedtestDirection {
     Upload,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SpeedtestServer {
+    Cloudflare,
+    Foctal,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SpeedtestResult {
@@ -18,6 +25,7 @@ pub enum SpeedtestResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpeedtestSetting {
+    pub server: SpeedtestServer,
     pub direction: SpeedtestDirection,
     pub target_bytes: u64,
     /// default 30_000

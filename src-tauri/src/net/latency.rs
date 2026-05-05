@@ -3,20 +3,11 @@ use reqwest::{header, Client};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
-use crate::model::speedtest::{LatencyDonePayload, LatencyUpdatePayload};
+use crate::model::speedtest::{LatencyDonePayload, LatencyUpdatePayload, SpeedtestServer};
 
-const CLOUDFLARE_PING_URL: &str = "https://speed.cloudflare.com/__down?bytes=0";
-const LEGACY_PING_URL: &str = "https://speedtest.foctal.com/ping";
 const CLOUDFLARE_REFERER: &str = "https://speed.cloudflare.com/";
 const TICK_WAIT: Duration = Duration::from_millis(120);
 pub(crate) const DEFAULT_PING_COUNT: u32 = 7;
-
-#[derive(serde::Deserialize)]
-struct PingResp {
-    #[allow(dead_code)]
-    ts: i64,
-    colo: Option<String>,
-}
 
 fn build_client(referer: Option<&str>) -> Result<Client> {
     let mut builder = Client::builder().timeout(Duration::from_secs(5));
@@ -26,6 +17,24 @@ fn build_client(referer: Option<&str>) -> Result<Client> {
         builder = builder.default_headers(headers);
     }
     builder.build().context("build reqwest client")
+}
+
+fn base_url(server: SpeedtestServer) -> &'static str {
+    match server {
+        SpeedtestServer::Cloudflare => "https://speed.cloudflare.com",
+        SpeedtestServer::Foctal => "https://speed.foctal.com",
+    }
+}
+
+fn referer(server: SpeedtestServer) -> Option<&'static str> {
+    match server {
+        SpeedtestServer::Cloudflare => Some(CLOUDFLARE_REFERER),
+        SpeedtestServer::Foctal => None,
+    }
+}
+
+fn latency_probe_url(server: SpeedtestServer) -> String {
+    format!("{}/__down?bytes=0", base_url(server))
 }
 
 async fn measure_with_client<F>(
@@ -62,46 +71,36 @@ where
     Ok(())
 }
 
-async fn measure_with_cloudflare(app: &AppHandle, samples: u32) -> Result<()> {
-    let client = build_client(Some(CLOUDFLARE_REFERER))?;
+pub async fn measure_latency_jitter(
+    app: &AppHandle,
+    server: SpeedtestServer,
+    samples: u32,
+) -> Result<()> {
+    let client = build_client(referer(server))?;
+    let probe_url = latency_probe_url(server);
+
     measure_with_client(app, &client, samples, |client| {
+        let probe_url = probe_url.clone();
         Box::pin(async move {
             let t0 = Instant::now();
             let resp = client
-                .get(CLOUDFLARE_PING_URL)
+                .get(&probe_url)
                 .send()
                 .await
-                .context("GET Cloudflare latency probe")?;
+                .with_context(|| format!("GET latency probe: {probe_url}"))?;
             let elapsed = t0.elapsed().as_secs_f64() * 1000.0;
 
             if !resp.status().is_success() {
-                anyhow::bail!("cloudflare latency http {}", resp.status());
+                anyhow::bail!("latency probe http {}", resp.status());
             }
 
             let colo = resp
                 .headers()
                 .get("cf-meta-colo")
+                .or_else(|| resp.headers().get("cf-ray"))
                 .and_then(|value| value.to_str().ok())
                 .map(|value| value.to_string());
 
-            Ok((elapsed, colo))
-        })
-    })
-    .await
-}
-
-async fn measure_with_legacy_ping(app: &AppHandle, samples: u32) -> Result<()> {
-    let client = build_client(None)?;
-    measure_with_client(app, &client, samples, |client| {
-        Box::pin(async move {
-            let t0 = Instant::now();
-            let resp = client
-                .get(LEGACY_PING_URL)
-                .send()
-                .await
-                .context("GET /ping")?;
-            let elapsed = t0.elapsed().as_secs_f64() * 1000.0;
-            let colo = resp.json::<PingResp>().await.ok().and_then(|p| p.colo);
             Ok((elapsed, colo))
         })
     })
@@ -155,18 +154,4 @@ fn emit_latency_done(app: &AppHandle, samples: Vec<f64>, colo: Option<String>) {
             colo,
         },
     );
-}
-
-pub async fn measure_latency_jitter(app: &AppHandle, samples: u32) -> Result<()> {
-    if let Err(error) = measure_with_cloudflare(app, samples).await {
-        tracing::warn!(
-            error = %error,
-            "Cloudflare latency probe failed; falling back to legacy ping endpoint"
-        );
-        return measure_with_legacy_ping(app, samples)
-            .await
-            .with_context(|| format!("cloudflare latency failed: {error}"));
-    }
-
-    Ok(())
 }
