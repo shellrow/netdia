@@ -7,6 +7,10 @@ import { definePreset } from '@primeuix/themes';
 import './style.css';
 import 'primeicons/primeicons.css';
 import { loadAppConfig } from "./composables/useAppConfig";
+import {
+  loadUiPreferences,
+  migrateLegacyUiPreferences,
+} from "./composables/useUiPreferences";
 
 // Components
 import StyleClass from 'primevue/styleclass';
@@ -73,8 +77,10 @@ const ThemePreset = definePreset(Aura, {
 async function bootstrap() {
   try {
     await loadAppConfig();
+    await loadUiPreferences();
+    await migrateLegacyUiPreferences();
   } catch (e) {
-    console.error("Failed to load config from Tauri:", e);
+    console.error("Failed to load persisted settings from Tauri:", e);
   }
 
   const app = createApp(App);

@@ -1,27 +1,16 @@
-import { ref } from "vue";
+import { useUiPreferences } from "./useUiPreferences";
 
-const LS_PUBLIC_IP_VISIBLE = "nd:privacy:public_ip_visible";
-const LS_HOSTNAME_VISIBLE = "nd:privacy:hostname_visible";
 const MASK_STR = "**hidden**";
 
-// Persistent visibility flag
-const publicIpVisible = ref<boolean>(
-  (localStorage.getItem(LS_PUBLIC_IP_VISIBLE) ?? "1") === "1"
-);
-
-const hostnameVisible = ref<boolean>(
-  (localStorage.getItem(LS_HOSTNAME_VISIBLE) ?? "1") === "1"
-);
+const { publicIpVisible, hostnameVisible, patchUiPreferences } = useUiPreferences();
 
 // Toggle visibility
 function togglePublicIp() {
-  publicIpVisible.value = !publicIpVisible.value;
-  localStorage.setItem(LS_PUBLIC_IP_VISIBLE, publicIpVisible.value ? "1" : "0");
+  void patchUiPreferences({ public_ip_visible: !publicIpVisible.value });
 }
 
 function toggleHostname() {
-  hostnameVisible.value = !hostnameVisible.value;
-  localStorage.setItem(LS_HOSTNAME_VISIBLE, hostnameVisible.value ? "1" : "0");
+  void patchUiPreferences({ hostname_visible: !hostnameVisible.value });
 }
 
 // Gate function - only returns actual value if visible, otherwise mask

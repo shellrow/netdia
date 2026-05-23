@@ -5,6 +5,7 @@ export interface LoggingConfig {
 
 export interface AppConfig {
   startup: boolean;
+  background: boolean;
   refresh_interval_ms: number;
   theme: "system" | "light" | "dark";
   data_unit: "bits" | "bytes";

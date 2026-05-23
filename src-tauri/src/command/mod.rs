@@ -10,6 +10,7 @@ pub mod socket;
 pub mod speedtest;
 pub mod system;
 pub mod trace;
+pub mod ui_preferences;
 pub mod updater;
 
 use crate::model::AppInfo;

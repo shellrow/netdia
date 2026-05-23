@@ -3,13 +3,14 @@ use tauri::State;
 use tokio::sync::RwLock;
 
 use crate::config::AppConfig;
+use crate::db::DatabaseState;
 
 #[derive(Default)]
 pub struct ConfigState(pub RwLock<AppConfig>);
 
 #[tauri::command]
 pub async fn get_config(state: State<'_, ConfigState>) -> Result<AppConfig, String> {
-    // Return in-memory if already loaded, else load from disk once.
+    // Return the in-memory config loaded during application startup.
     let cfg = {
         let read = state.0.read().await;
         read.clone()
@@ -18,8 +19,11 @@ pub async fn get_config(state: State<'_, ConfigState>) -> Result<AppConfig, Stri
 }
 
 #[tauri::command]
-pub async fn reload_config(state: State<'_, ConfigState>) -> Result<AppConfig, String> {
-    let cfg = AppConfig::load();
+pub async fn reload_config(
+    state: State<'_, ConfigState>,
+    db: State<'_, DatabaseState>,
+) -> Result<AppConfig, String> {
+    let cfg = db.load_app_config().await.map_err(|e| e.to_string())?;
     {
         let mut write = state.0.write().await;
         *write = cfg.clone();
@@ -28,9 +32,13 @@ pub async fn reload_config(state: State<'_, ConfigState>) -> Result<AppConfig, S
 }
 
 #[tauri::command]
-pub async fn save_config(state: State<'_, ConfigState>, cfg: AppConfig) -> Result<(), String> {
+pub async fn save_config(
+    state: State<'_, ConfigState>,
+    db: State<'_, DatabaseState>,
+    cfg: AppConfig,
+) -> Result<(), String> {
     // Persist to disk + update in-memory
-    cfg.save();
+    db.save_app_config(&cfg).await.map_err(|e| e.to_string())?;
     {
         let mut write = state.0.write().await;
         *write = cfg;
