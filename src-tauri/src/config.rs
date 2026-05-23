@@ -1,10 +1,10 @@
-use std::fmt;
+use std::{fmt, path::Path};
 
 use serde::{Deserialize, Serialize};
 
 use crate::log::DEFAULT_LOG_FILE_NAME;
 
-pub const DEFAULT_CONFIG_FILE_NAME: &str = "netdia-config.json";
+pub const LEGACY_CONFIG_FILE_NAME: &str = "netdia-config.json";
 const DEFAULT_THEME: &str = "dark";
 
 pub mod bps_unit {
@@ -53,46 +53,18 @@ impl AppConfig {
             auto_internet_check_interval_s: 60,
         }
     }
-    pub fn load() -> AppConfig {
-        match crate::fs::get_user_file_path(DEFAULT_CONFIG_FILE_NAME) {
-            Some(path) => {
-                match std::fs::read_to_string(&path) {
-                    Ok(content) => match serde_json::from_str(&content) {
-                        Ok(config) => config,
-                        Err(e) => {
-                            tracing::error!("{:?}", e);
-                            AppConfig::new()
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!("{:?}", e);
-                        // Create default config
-                        let config = AppConfig::new();
-                        config.save();
-                        config
-                    }
-                }
-            }
-            None => {
-                // Create default config
-                let config = AppConfig::new();
-                config.save();
-                config
-            }
-        }
-    }
-    pub fn save(&self) {
-        if let Some(path) = crate::fs::get_user_file_path(DEFAULT_CONFIG_FILE_NAME) {
-            match serde_json::to_string_pretty(&self) {
-                Ok(content) => match std::fs::write(&path, content) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::error!("{:?}", e);
-                    }
-                },
+    pub fn load_legacy_from_path(path: &Path) -> Option<AppConfig> {
+        match std::fs::read_to_string(path) {
+            Ok(content) => match serde_json::from_str(&content) {
+                Ok(config) => Some(config),
                 Err(e) => {
-                    tracing::error!("{:?}", e);
+                    tracing::error!("Failed to parse legacy config file: {:?}", e);
+                    None
                 }
+            },
+            Err(e) => {
+                tracing::error!("Failed to read legacy config file: {:?}", e);
+                None
             }
         }
     }

@@ -1,13 +1,19 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import { DomainLookupInfo } from "../types/dns";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
-import { STORAGE_KEYS } from "../constants/storage";
+import { useUiPreferences } from "../composables/useUiPreferences";
 
-const q = ref(localStorage.getItem(STORAGE_KEYS.LAST_DNS_QUERY) || "example.com");
+const { lastDnsQuery, patchUiPreferences } = useUiPreferences();
+const q = ref(lastDnsQuery.value);
+watch(lastDnsQuery, (value) => {
+  if (q.value !== value) {
+    q.value = value;
+  }
+});
 const loading = ref(false);
 const err = ref<string | null>(null);
 const data = ref<DomainLookupInfo | null>(null);
@@ -22,7 +28,7 @@ async function runLookup() {
   try {
     const res = await invoke<DomainLookupInfo>("lookup_all", { hostname: target });
     data.value = res;
-    localStorage.setItem(STORAGE_KEYS.LAST_DNS_QUERY, target);
+    await patchUiPreferences({ last_dns_query: target });
   } catch (e: any) {
     err.value = String(e?.message ?? e ?? "Lookup failed");
   } finally {

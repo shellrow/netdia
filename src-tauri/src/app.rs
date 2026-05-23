@@ -1,3 +1,4 @@
+use futures::executor::block_on;
 use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -10,6 +11,7 @@ use tauri_plugin_autostart::{init as autostart_init, MacosLauncher, ManagerExt};
 
 use crate::{
     command::{self, config::ConfigState, updater::PendingUpdate},
+    db::DatabaseState,
     service,
     state::AppState,
 };
@@ -41,7 +43,10 @@ fn tray_icon_bytes(dark: bool) -> &'static [u8] {
 }
 
 pub fn run() {
-    let app_conf: crate::config::AppConfig = crate::config::AppConfig::load();
+    let db_state =
+        block_on(DatabaseState::initialize()).expect("failed to initialize local database");
+    let app_conf =
+        block_on(db_state.load_app_config()).expect("failed to load app config from database");
     let startup = app_conf.startup;
     let background = app_conf.background;
     let _ = crate::log::init_logger(&app_conf);
@@ -56,6 +61,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Register AppState as Tauri State
         .manage(conf_state)
+        .manage(db_state)
         .manage(shared_app_state.clone())
         .manage(PendingUpdate::default())
         // Setup: spawn background task
@@ -190,6 +196,8 @@ pub fn run() {
             command::config::reload_config,
             command::config::save_config,
             command::config::logs_dir_path,
+            command::ui_preferences::get_ui_preferences,
+            command::ui_preferences::patch_ui_preferences,
             command::dns::lookup_host,
             command::dns::lookup_domain,
             command::dns::lookup_ip,
