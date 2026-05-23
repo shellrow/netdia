@@ -2,15 +2,17 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use turso::{Builder, Connection};
+use turso::{transaction::TransactionBehavior, Builder, Connection};
 
 use crate::config::{AppConfig, LogLevel, LEGACY_CONFIG_FILE_NAME};
 
 pub const DEFAULT_DB_FILE_NAME: &str = "netdia.db";
 
 const DB_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+const UI_PREFERENCES_MIGRATED_KEY: &str = "legacy_ui_preferences_migrated";
+const CURRENT_SCHEMA_VERSION: i64 = 2;
 
-const SCHEMA_SQL: &str = r#"
+const CREATE_APP_CONFIG_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS app_config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     startup INTEGER NOT NULL CHECK (startup IN (0, 1)),
@@ -26,6 +28,15 @@ CREATE TABLE IF NOT EXISTS app_config (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TRIGGER IF NOT EXISTS app_config_touch_updated_at
+AFTER UPDATE ON app_config
+FOR EACH ROW
+BEGIN
+    UPDATE app_config SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+"#;
+
+const CREATE_UI_PREFERENCES_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS ui_preferences (
     key TEXT PRIMARY KEY,
     value_json TEXT NOT NULL,
@@ -33,18 +44,27 @@ CREATE TABLE IF NOT EXISTS ui_preferences (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TRIGGER IF NOT EXISTS app_config_touch_updated_at
-AFTER UPDATE ON app_config
-FOR EACH ROW
-BEGIN
-    UPDATE app_config SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-END;
-
 CREATE TRIGGER IF NOT EXISTS ui_preferences_touch_updated_at
 AFTER UPDATE ON ui_preferences
 FOR EACH ROW
 BEGIN
     UPDATE ui_preferences SET updated_at = CURRENT_TIMESTAMP WHERE key = NEW.key;
+END;
+"#;
+
+const CREATE_APP_METADATA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS app_metadata (
+    key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TRIGGER IF NOT EXISTS app_metadata_touch_updated_at
+AFTER UPDATE ON app_metadata
+FOR EACH ROW
+BEGIN
+    UPDATE app_metadata SET updated_at = CURRENT_TIMESTAMP WHERE key = NEW.key;
 END;
 "#;
 
@@ -80,23 +100,40 @@ pub struct UiPreferencesPatch {
     pub hostname_visible: Option<bool>,
 }
 
-impl UiPreferences {
-    pub fn apply_patch(&mut self, patch: UiPreferencesPatch) {
-        if let Some(sidebar_compact) = patch.sidebar_compact {
-            self.sidebar_compact = sidebar_compact;
+#[derive(Debug, Clone, Serialize)]
+pub struct LegacyUiPreferencesMigrationResult {
+    pub preferences: UiPreferences,
+    pub migrated: bool,
+}
+
+impl UiPreferencesPatch {
+    pub fn is_empty(&self) -> bool {
+        self.sidebar_compact.is_none()
+            && self.last_dns_query.is_none()
+            && self.public_ip_visible.is_none()
+            && self.hostname_visible.is_none()
+    }
+
+    fn entries(&self) -> Result<Vec<(&'static str, String)>> {
+        let mut entries = Vec::new();
+
+        if let Some(value) = self.sidebar_compact {
+            entries.push(("sidebar_compact", serde_json::to_string(&value)?));
         }
-        if let Some(last_dns_query) = patch.last_dns_query {
-            let trimmed = last_dns_query.trim();
+        if let Some(value) = &self.last_dns_query {
+            let trimmed = value.trim();
             if !trimmed.is_empty() {
-                self.last_dns_query = trimmed.to_string();
+                entries.push(("last_dns_query", serde_json::to_string(trimmed)?));
             }
         }
-        if let Some(public_ip_visible) = patch.public_ip_visible {
-            self.public_ip_visible = public_ip_visible;
+        if let Some(value) = self.public_ip_visible {
+            entries.push(("public_ip_visible", serde_json::to_string(&value)?));
         }
-        if let Some(hostname_visible) = patch.hostname_visible {
-            self.hostname_visible = hostname_visible;
+        if let Some(value) = self.hostname_visible {
+            entries.push(("hostname_visible", serde_json::to_string(&value)?));
         }
+
+        Ok(entries)
     }
 }
 
@@ -127,19 +164,44 @@ impl DatabaseState {
     }
 
     async fn initialize_schema(&self) -> Result<()> {
-        let conn = self.connect()?;
+        let mut conn = self.connect()?;
         conn.pragma_update("journal_mode", "'wal'")
             .await
             .context("Failed to enable WAL mode")?;
         conn.pragma_update("foreign_keys", "ON")
             .await
             .context("Failed to enable foreign keys")?;
-        conn.pragma_update("user_version", 1)
-            .await
-            .context("Failed to set schema version")?;
-        conn.execute_batch(SCHEMA_SQL)
-            .await
-            .context("Failed to initialize database schema")?;
+
+        let version = read_user_version(&conn).await?;
+        self.migrate_schema(&mut conn, version).await?;
+        Ok(())
+    }
+
+    async fn migrate_schema(&self, conn: &mut Connection, version: i64) -> Result<()> {
+        let mut current = version;
+
+        while current < CURRENT_SCHEMA_VERSION {
+            match current {
+                0 => {
+                    migrate_to_v1(conn).await?;
+                    current = 1;
+                }
+                1 => {
+                    migrate_to_v2(conn).await?;
+                    current = 2;
+                }
+                other => {
+                    return Err(anyhow!("Unsupported database schema version: {other}"));
+                }
+            }
+        }
+
+        if current > CURRENT_SCHEMA_VERSION {
+            return Err(anyhow!(
+                "Database schema version {current} is newer than supported version {CURRENT_SCHEMA_VERSION}"
+            ));
+        }
+
         Ok(())
     }
 
@@ -159,7 +221,7 @@ impl DatabaseState {
         let defaults = UiPreferences::default();
         let current = self.load_ui_preferences().await?;
         if current == defaults {
-            self.save_ui_preferences(&defaults).await?;
+            self.replace_ui_preferences(&defaults).await?;
         }
         Ok(())
     }
@@ -171,6 +233,11 @@ impl DatabaseState {
             .await
             .context("Failed to check app config presence")?;
         Ok(rows.next().await?.is_some())
+    }
+
+    async fn is_legacy_ui_preferences_migrated(&self) -> Result<bool> {
+        let conn = self.connect()?;
+        read_metadata_bool(&conn, UI_PREFERENCES_MIGRATED_KEY).await
     }
 
     pub async fn load_app_config(&self) -> Result<AppConfig> {
@@ -265,6 +332,10 @@ impl DatabaseState {
 
     pub async fn load_ui_preferences(&self) -> Result<UiPreferences> {
         let conn = self.connect()?;
+        self.load_ui_preferences_with_conn(&conn).await
+    }
+
+    async fn load_ui_preferences_with_conn(&self, conn: &Connection) -> Result<UiPreferences> {
         let mut rows = conn
             .query("SELECT key, value_json FROM ui_preferences", ())
             .await
@@ -305,29 +376,31 @@ impl DatabaseState {
         Ok(prefs)
     }
 
-    pub async fn save_ui_preferences(&self, prefs: &UiPreferences) -> Result<()> {
-        let conn = self.connect()?;
-        let values = [
-            (
-                "sidebar_compact",
-                serde_json::to_string(&prefs.sidebar_compact)?,
-            ),
-            (
-                "last_dns_query",
-                serde_json::to_string(&prefs.last_dns_query)?,
-            ),
-            (
-                "public_ip_visible",
-                serde_json::to_string(&prefs.public_ip_visible)?,
-            ),
-            (
-                "hostname_visible",
-                serde_json::to_string(&prefs.hostname_visible)?,
-            ),
-        ];
+    pub async fn replace_ui_preferences(&self, prefs: &UiPreferences) -> Result<()> {
+        let patch = UiPreferencesPatch {
+            sidebar_compact: Some(prefs.sidebar_compact),
+            last_dns_query: Some(prefs.last_dns_query.clone()),
+            public_ip_visible: Some(prefs.public_ip_visible),
+            hostname_visible: Some(prefs.hostname_visible),
+        };
+        self.patch_ui_preferences(patch).await?;
+        Ok(())
+    }
 
-        for (key, value_json) in values {
-            conn.execute(
+    pub async fn patch_ui_preferences(&self, patch: UiPreferencesPatch) -> Result<UiPreferences> {
+        let entries = patch.entries()?;
+        if entries.is_empty() {
+            return self.load_ui_preferences().await;
+        }
+
+        let mut conn = self.connect()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .context("Failed to start UI preferences transaction")?;
+
+        for (key, value_json) in entries {
+            tx.execute(
                 r#"
                 INSERT INTO ui_preferences (key, value_json)
                 VALUES (?1, ?2)
@@ -339,15 +412,160 @@ impl DatabaseState {
             .with_context(|| format!("Failed to save UI preference: {key}"))?;
         }
 
-        Ok(())
-    }
-
-    pub async fn patch_ui_preferences(&self, patch: UiPreferencesPatch) -> Result<UiPreferences> {
-        let mut prefs = self.load_ui_preferences().await?;
-        prefs.apply_patch(patch);
-        self.save_ui_preferences(&prefs).await?;
+        let prefs = self.load_ui_preferences_with_conn(&tx).await?;
+        tx.commit()
+            .await
+            .context("Failed to commit UI preferences transaction")?;
         Ok(prefs)
     }
+
+    pub async fn migrate_legacy_ui_preferences(
+        &self,
+        patch: UiPreferencesPatch,
+    ) -> Result<LegacyUiPreferencesMigrationResult> {
+        if patch.is_empty() && self.is_legacy_ui_preferences_migrated().await? {
+            return Ok(LegacyUiPreferencesMigrationResult {
+                preferences: self.load_ui_preferences().await?,
+                migrated: false,
+            });
+        }
+
+        let mut conn = self.connect()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .context("Failed to start legacy UI preferences migration transaction")?;
+
+        let already_migrated = read_metadata_bool(&tx, UI_PREFERENCES_MIGRATED_KEY).await?;
+        if already_migrated {
+            let preferences = self.load_ui_preferences_with_conn(&tx).await?;
+            tx.commit()
+                .await
+                .context("Failed to commit no-op legacy UI preferences migration")?;
+            return Ok(LegacyUiPreferencesMigrationResult {
+                preferences,
+                migrated: false,
+            });
+        }
+
+        let entries = patch.entries()?;
+        for (key, value_json) in entries {
+            tx.execute(
+                r#"
+                INSERT INTO ui_preferences (key, value_json)
+                VALUES (?1, ?2)
+                ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json
+                "#,
+                (key, value_json),
+            )
+            .await
+            .with_context(|| format!("Failed to migrate legacy UI preference: {key}"))?;
+        }
+
+        write_metadata_value(
+            &tx,
+            UI_PREFERENCES_MIGRATED_KEY,
+            serde_json::to_string(&true)?,
+        )
+        .await?;
+
+        let preferences = self.load_ui_preferences_with_conn(&tx).await?;
+        tx.commit()
+            .await
+            .context("Failed to commit legacy UI preferences migration")?;
+
+        Ok(LegacyUiPreferencesMigrationResult {
+            preferences,
+            migrated: true,
+        })
+    }
+}
+
+async fn migrate_to_v1(conn: &mut Connection) -> Result<()> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .context("Failed to start schema migration to v1")?;
+    tx.execute_batch(CREATE_APP_CONFIG_SQL)
+        .await
+        .context("Failed to create app_config table")?;
+    tx.execute_batch(CREATE_UI_PREFERENCES_SQL)
+        .await
+        .context("Failed to create ui_preferences table")?;
+    tx.pragma_update("user_version", 1)
+        .await
+        .context("Failed to update schema version to 1")?;
+    tx.commit()
+        .await
+        .context("Failed to commit schema migration to v1")?;
+    Ok(())
+}
+
+async fn migrate_to_v2(conn: &mut Connection) -> Result<()> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .context("Failed to start schema migration to v2")?;
+    tx.execute_batch(CREATE_APP_METADATA_SQL)
+        .await
+        .context("Failed to create app_metadata table")?;
+    tx.pragma_update("user_version", 2)
+        .await
+        .context("Failed to update schema version to 2")?;
+    tx.commit()
+        .await
+        .context("Failed to commit schema migration to v2")?;
+    Ok(())
+}
+
+async fn read_user_version(conn: &Connection) -> Result<i64> {
+    let mut rows = conn
+        .query("PRAGMA user_version", ())
+        .await
+        .context("Failed to read schema version")?;
+    match rows
+        .next()
+        .await
+        .context("Failed to fetch schema version row")?
+    {
+        Some(row) => row
+            .get::<i64>(0)
+            .context("Failed to decode schema version value"),
+        None => Ok(0),
+    }
+}
+
+async fn read_metadata_bool(conn: &Connection, key: &str) -> Result<bool> {
+    let mut rows = conn
+        .query(
+            "SELECT value_json FROM app_metadata WHERE key = ?1 LIMIT 1",
+            [key],
+        )
+        .await
+        .with_context(|| format!("Failed to read app metadata: {key}"))?;
+
+    match rows.next().await? {
+        Some(row) => {
+            let value_json: String = row.get(0)?;
+            serde_json::from_str(&value_json)
+                .with_context(|| format!("Failed to decode app metadata: {key}"))
+        }
+        None => Ok(false),
+    }
+}
+
+async fn write_metadata_value(conn: &Connection, key: &str, value_json: String) -> Result<()> {
+    conn.execute(
+        r#"
+        INSERT INTO app_metadata (key, value_json)
+        VALUES (?1, ?2)
+        ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json
+        "#,
+        (key, value_json),
+    )
+    .await
+    .with_context(|| format!("Failed to write app metadata: {key}"))?;
+    Ok(())
 }
 
 fn parse_log_level(value: &str) -> Result<LogLevel> {

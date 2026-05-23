@@ -1,7 +1,11 @@
 import { computed, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { STORAGE_KEYS } from "../constants/storage";
-import type { UiPreferences, UiPreferencesPatch } from "../types/preferences";
+import type {
+  LegacyUiPreferencesMigrationResult,
+  UiPreferences,
+  UiPreferencesPatch,
+} from "../types/preferences";
 
 const DEFAULT_UI_PREFERENCES: UiPreferences = {
   sidebar_compact: true,
@@ -97,7 +101,11 @@ export async function migrateLegacyUiPreferences(): Promise<void> {
     return;
   }
 
-  await patchUiPreferences(patch);
+  const result = await invoke<LegacyUiPreferencesMigrationResult>(
+    "migrate_legacy_ui_preferences",
+    { patch },
+  );
+  applyUiPreferences(result.preferences);
   for (const key of cleanupKeys) {
     localStorage.removeItem(key);
   }

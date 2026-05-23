@@ -198,6 +198,7 @@ pub fn run() {
             command::config::logs_dir_path,
             command::ui_preferences::get_ui_preferences,
             command::ui_preferences::patch_ui_preferences,
+            command::ui_preferences::migrate_legacy_ui_preferences,
             command::dns::lookup_host,
             command::dns::lookup_domain,
             command::dns::lookup_ip,

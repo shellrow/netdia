@@ -11,3 +11,8 @@ export interface UiPreferencesPatch {
   public_ip_visible?: boolean;
   hostname_visible?: boolean;
 }
+
+export interface LegacyUiPreferencesMigrationResult {
+  preferences: UiPreferences;
+  migrated: boolean;
+}

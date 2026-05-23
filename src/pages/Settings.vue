@@ -92,7 +92,6 @@ async function saveConfig() {
   if (!cfg.value) return;
   const next: AppConfig = {
     ...cfg.value,
-    startup: false,
     theme: theme.value,
     refresh_interval_ms: refreshMs.value,
     data_unit: bpsUnit.value,
