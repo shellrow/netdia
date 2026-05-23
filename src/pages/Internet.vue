@@ -33,7 +33,7 @@ type Result = "full" | "timeout" | "canceled" | "error";
 type SpeedtestType = "byte-stream" | "file-download";
 
 const speedDirection = ref<Direction>("download");
-const speedtestType = ref<SpeedtestType>("byte-stream");
+const speedtestType = ref<SpeedtestType>("file-download");
 
 const sizeOptions = ref([
   { label: "100 KB", bytes: 100 * 1024 },
@@ -82,8 +82,8 @@ const elapsedText = computed(() => fmtDuration(stElapsedMs.value));
 const maxDurationMs = 30_000;
 
 const speedtestTypeOptions: Array<{ label: string; value: SpeedtestType }> = [
-  { label: "Byte Stream", value: "byte-stream" },
   { label: "File Download", value: "file-download" },
+  { label: "Byte Stream", value: "byte-stream" },
 ];
 
 const directionOptions = computed(() => [
