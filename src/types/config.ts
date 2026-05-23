@@ -12,4 +12,5 @@ export interface AppConfig {
   logging: LoggingConfig;
   auto_internet_check: boolean;
   auto_internet_check_interval_s: number;
+  auto_update_check: boolean;
 }

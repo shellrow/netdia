@@ -31,6 +31,8 @@ pub struct AppConfig {
     pub auto_internet_check: bool,
     /// Auto internet check interval in seconds
     pub auto_internet_check_interval_s: u64,
+    /// Check for app updates automatically on startup.
+    pub auto_update_check: bool,
 }
 
 // Implement default
@@ -51,6 +53,7 @@ impl AppConfig {
             logging: LoggingConfig::new(),
             auto_internet_check: true,
             auto_internet_check_interval_s: 60,
+            auto_update_check: true,
         }
     }
     pub fn load_legacy_from_path(path: &Path) -> Option<AppConfig> {

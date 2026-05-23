@@ -7,6 +7,7 @@ import { definePreset } from '@primeuix/themes';
 import './style.css';
 import 'primeicons/primeicons.css';
 import { loadAppConfig } from "./composables/useAppConfig";
+import { initializeNotificationsOnStartup } from "./composables/useNotifications";
 import {
   loadUiPreferences,
   migrateLegacyUiPreferences,
@@ -26,6 +27,7 @@ import MultiSelect from 'primevue/multiselect';
 import Tag from 'primevue/tag';
 import ScrollPanel from 'primevue/scrollpanel';
 import Dialog from 'primevue/dialog';
+import Drawer from 'primevue/drawer';
 import Chip from 'primevue/chip';
 import Select from 'primevue/select';
 import Tooltip from 'primevue/tooltip';
@@ -106,6 +108,7 @@ async function bootstrap() {
   app.component('MultiSelect', MultiSelect);
   app.component('ScrollPanel', ScrollPanel);
   app.component('Dialog', Dialog);
+  app.component('Drawer', Drawer);
   app.component('Chip', Chip);
   app.component('Select', Select);
   app.component('Card', Card);
@@ -121,6 +124,7 @@ async function bootstrap() {
   app.directive('styleclass', StyleClass);
 
   app.mount('#app');
+  void initializeNotificationsOnStartup();
 }
 
 void bootstrap();

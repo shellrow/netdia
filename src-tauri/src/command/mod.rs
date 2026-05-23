@@ -3,6 +3,7 @@ pub mod dns;
 pub mod interfaces;
 pub mod internet;
 pub mod latency;
+pub mod notifications;
 pub mod ping;
 pub mod routes;
 pub mod scan;

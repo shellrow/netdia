@@ -74,6 +74,7 @@ export function useAppConfig() {
     autoInternetCheckIntervalS: computed(
       () => config.value?.auto_internet_check_interval_s ?? 60,
     ),
+    autoUpdateCheck: computed(() => config.value?.auto_update_check ?? true),
     loadAppConfig,
     saveAppConfig,
     patchAppConfig,

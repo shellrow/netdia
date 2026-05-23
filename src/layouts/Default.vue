@@ -4,10 +4,14 @@ import { RouteRecordName, useRoute } from "vue-router";
 import { useTheme } from "../composables/useTheme";
 import { getName as getAppName, getVersion as getAppVersion } from "@tauri-apps/api/app";
 import { useUiPreferences } from "../composables/useUiPreferences";
+import { useNotifications } from "../composables/useNotifications";
+import NotificationDrawer from "../components/NotificationDrawer.vue";
 
 const { currentLogoFile } = useTheme();
 const { sidebarCompact, patchUiPreferences } = useUiPreferences();
+const { unreadCount, loadNotifications, markAllNotificationsRead } = useNotifications();
 const isCompact = ref(sidebarCompact.value);
+const notificationsVisible = ref(false);
 watch(sidebarCompact, (value) => {
   if (isCompact.value !== value) {
     isCompact.value = value;
@@ -65,6 +69,16 @@ const getMenuNameByRoute = (routeName: RouteRecordName | null | undefined): stri
 };
 
 const currentMenuTitle = computed(() => getMenuNameByRoute(route.name));
+const unreadBadgeText = computed(() => (unreadCount.value > 9 ? "9+" : `${unreadCount.value}`));
+
+watch(notificationsVisible, (visible) => {
+  if (visible) {
+    void (async () => {
+      await loadNotifications();
+      await markAllNotificationsRead();
+    })();
+  }
+});
 
 onMounted(async () => {
   try {
@@ -167,7 +181,23 @@ onMounted(async () => {
         <!-- Actions -->
         <div class="flex items-center gap-2">
           <!-- <Button outlined :icon="currentThemeIcon" v-tooltip.bottom="'Toggle Theme'" severity="secondary" class="icon-btn" aria-label="Toggle theme" @click="toggleTheme" /> -->
-          <Button outlined icon="pi pi-bell" v-tooltip.bottom="'Notifications'" severity="secondary" class="icon-btn" aria-label="Notifications" />
+          <div class="relative">
+            <Button
+              outlined
+              icon="pi pi-bell"
+              v-tooltip.bottom="'Notifications'"
+              severity="secondary"
+              class="icon-btn"
+              aria-label="Notifications"
+              @click="notificationsVisible = true"
+            />
+            <span
+              v-if="unreadCount > 0"
+              class="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-primary-500 px-1 text-[10px] font-semibold text-white shadow-sm"
+            >
+              {{ unreadBadgeText }}
+            </span>
+          </div>
           <Button outlined icon="pi pi-info-circle" v-tooltip.bottom="'About'" severity="secondary" class="icon-btn" aria-label="About" @click="aboutVisible = true" />
         </div>
       </header>
@@ -248,4 +278,5 @@ onMounted(async () => {
       <Button label="Close" text severity="secondary" @click="aboutVisible = false" />
     </template>
   </Dialog>
+  <NotificationDrawer v-model:visible="notificationsVisible" />
 </template>

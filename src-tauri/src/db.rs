@@ -10,7 +10,7 @@ pub const DEFAULT_DB_FILE_NAME: &str = "netdia.db";
 
 const DB_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const UI_PREFERENCES_MIGRATED_KEY: &str = "legacy_ui_preferences_migrated";
-const CURRENT_SCHEMA_VERSION: i64 = 2;
+const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 const CREATE_APP_CONFIG_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS app_config (
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS app_config (
     logging_file_path TEXT,
     auto_internet_check INTEGER NOT NULL CHECK (auto_internet_check IN (0, 1)),
     auto_internet_check_interval_s INTEGER NOT NULL CHECK (auto_internet_check_interval_s >= 1),
+    auto_update_check INTEGER NOT NULL CHECK (auto_update_check IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -33,6 +34,28 @@ AFTER UPDATE ON app_config
 FOR EACH ROW
 BEGIN
     UPDATE app_config SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+"#;
+
+const CREATE_NOTIFICATIONS_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    dedupe_key TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    data_json TEXT,
+    is_read INTEGER NOT NULL DEFAULT 0 CHECK (is_read IN (0, 1)),
+    dismissed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TRIGGER IF NOT EXISTS notifications_touch_updated_at
+AFTER UPDATE ON notifications
+FOR EACH ROW
+BEGIN
+    UPDATE notifications SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
 END;
 "#;
 
@@ -104,6 +127,27 @@ pub struct UiPreferencesPatch {
 pub struct LegacyUiPreferencesMigrationResult {
     pub preferences: UiPreferences,
     pub migrated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppNotification {
+    pub id: i64,
+    pub kind: String,
+    pub title: String,
+    pub message: String,
+    pub data: Option<serde_json::Value>,
+    pub is_read: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateNotificationPayload {
+    pub version: Option<String>,
+    pub current_version: Option<String>,
+    pub notes: Option<String>,
+    pub pub_date: Option<String>,
+    pub store_url: Option<String>,
 }
 
 impl UiPreferencesPatch {
@@ -190,6 +234,10 @@ impl DatabaseState {
                     migrate_to_v2(conn).await?;
                     current = 2;
                 }
+                2 => {
+                    migrate_to_v3(conn).await?;
+                    current = 3;
+                }
                 other => {
                     return Err(anyhow!("Unsupported database schema version: {other}"));
                 }
@@ -254,7 +302,8 @@ impl DatabaseState {
                     logging_level,
                     logging_file_path,
                     auto_internet_check,
-                    auto_internet_check_interval_s
+                    auto_internet_check_interval_s,
+                    auto_update_check
                 FROM app_config
                 WHERE id = 1
                 "#,
@@ -276,6 +325,7 @@ impl DatabaseState {
                 },
                 auto_internet_check: row.get::<i64>(7)? != 0,
                 auto_internet_check_interval_s: row.get::<i64>(8)? as u64,
+                auto_update_check: row.get::<i64>(9)? != 0,
             }),
             None => {
                 let config = AppConfig::default();
@@ -299,8 +349,9 @@ impl DatabaseState {
                 logging_level,
                 logging_file_path,
                 auto_internet_check,
-                auto_internet_check_interval_s
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                auto_internet_check_interval_s,
+                auto_update_check
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             ON CONFLICT(id) DO UPDATE SET
                 startup = excluded.startup,
                 background = excluded.background,
@@ -310,7 +361,8 @@ impl DatabaseState {
                 logging_level = excluded.logging_level,
                 logging_file_path = excluded.logging_file_path,
                 auto_internet_check = excluded.auto_internet_check,
-                auto_internet_check_interval_s = excluded.auto_internet_check_interval_s
+                auto_internet_check_interval_s = excluded.auto_internet_check_interval_s,
+                auto_update_check = excluded.auto_update_check
             "#,
             (
                 1_i64,
@@ -323,6 +375,7 @@ impl DatabaseState {
                 cfg.logging.file_path.clone(),
                 cfg.auto_internet_check,
                 cfg.auto_internet_check_interval_s as i64,
+                cfg.auto_update_check,
             ),
         )
         .await
@@ -479,6 +532,106 @@ impl DatabaseState {
             migrated: true,
         })
     }
+
+    pub async fn list_notifications(&self) -> Result<Vec<AppNotification>> {
+        let conn = self.connect()?;
+        let mut rows = conn
+            .query(
+                r#"
+                SELECT id, kind, title, message, data_json, is_read, created_at, updated_at
+                FROM notifications
+                WHERE dismissed_at IS NULL
+                ORDER BY is_read ASC, created_at DESC, id DESC
+                "#,
+                (),
+            )
+            .await
+            .context("Failed to load notifications")?;
+
+        let mut notifications = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .context("Failed to read notification row")?
+        {
+            notifications.push(decode_notification_row(&row)?);
+        }
+
+        Ok(notifications)
+    }
+
+    pub async fn mark_all_notifications_read(&self) -> Result<Vec<AppNotification>> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            UPDATE notifications
+            SET is_read = 1
+            WHERE dismissed_at IS NULL AND is_read = 0
+            "#,
+            (),
+        )
+        .await
+        .context("Failed to mark notifications as read")?;
+        self.list_notifications().await
+    }
+
+    pub async fn dismiss_notification(&self, id: i64) -> Result<Vec<AppNotification>> {
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            UPDATE notifications
+            SET dismissed_at = CURRENT_TIMESTAMP
+            WHERE id = ?1
+            "#,
+            [id],
+        )
+        .await
+        .with_context(|| format!("Failed to dismiss notification: {id}"))?;
+        self.list_notifications().await
+    }
+
+    pub async fn upsert_update_notification(
+        &self,
+        payload: UpdateNotificationPayload,
+    ) -> Result<Vec<AppNotification>> {
+        let version = payload
+            .version
+            .clone()
+            .unwrap_or_else(|| "latest".to_string());
+        let dedupe_key = format!("update_available:{version}");
+        let title = format!("NetDia {version} is available");
+        let message = match payload.current_version.as_deref() {
+            Some(current) if !current.is_empty() => {
+                format!("An update is ready. Current version: {current}.")
+            }
+            _ => "An update is ready for NetDia.".to_string(),
+        };
+        let data_json =
+            serde_json::to_string(&payload).context("Failed to encode notification payload")?;
+
+        let conn = self.connect()?;
+        conn.execute(
+            r#"
+            INSERT INTO notifications (
+                kind,
+                dedupe_key,
+                title,
+                message,
+                data_json,
+                is_read
+            ) VALUES (?1, ?2, ?3, ?4, ?5, 0)
+            ON CONFLICT(dedupe_key) DO UPDATE SET
+                title = excluded.title,
+                message = excluded.message,
+                data_json = excluded.data_json
+            "#,
+            ("update_available", dedupe_key, title, message, data_json),
+        )
+        .await
+        .context("Failed to save update notification")?;
+
+        self.list_notifications().await
+    }
 }
 
 async fn migrate_to_v1(conn: &mut Connection) -> Result<()> {
@@ -515,6 +668,34 @@ async fn migrate_to_v2(conn: &mut Connection) -> Result<()> {
     tx.commit()
         .await
         .context("Failed to commit schema migration to v2")?;
+    Ok(())
+}
+
+async fn migrate_to_v3(conn: &mut Connection) -> Result<()> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .await
+        .context("Failed to start schema migration to v3")?;
+    if !table_has_column(&tx, "app_config", "auto_update_check").await? {
+        tx.execute(
+            r#"
+            ALTER TABLE app_config
+            ADD COLUMN auto_update_check INTEGER NOT NULL DEFAULT 1 CHECK (auto_update_check IN (0, 1))
+            "#,
+            (),
+        )
+        .await
+        .context("Failed to add auto_update_check column")?;
+    }
+    tx.execute_batch(CREATE_NOTIFICATIONS_SQL)
+        .await
+        .context("Failed to create notifications table")?;
+    tx.pragma_update("user_version", 3)
+        .await
+        .context("Failed to update schema version to 3")?;
+    tx.commit()
+        .await
+        .context("Failed to commit schema migration to v3")?;
     Ok(())
 }
 
@@ -568,6 +749,23 @@ async fn write_metadata_value(conn: &Connection, key: &str, value_json: String) 
     Ok(())
 }
 
+async fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let query = format!("PRAGMA table_info({table})");
+    let mut rows = conn
+        .query(&query, ())
+        .await
+        .with_context(|| format!("Failed to inspect schema for table: {table}"))?;
+
+    while let Some(row) = rows.next().await.context("Failed to read table info row")? {
+        let existing: String = row.get(1)?;
+        if existing == column {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 fn parse_log_level(value: &str) -> Result<LogLevel> {
     match value {
         "DEBUG" => Ok(LogLevel::DEBUG),
@@ -576,4 +774,25 @@ fn parse_log_level(value: &str) -> Result<LogLevel> {
         "ERROR" => Ok(LogLevel::ERROR),
         other => Err(anyhow!("Unsupported log level in database: {other}")),
     }
+}
+
+fn decode_notification_row(row: &turso::Row) -> Result<AppNotification> {
+    let data_json: Option<String> = row.get(4)?;
+    let data = match data_json {
+        Some(value) => {
+            Some(serde_json::from_str(&value).context("Failed to decode notification payload")?)
+        }
+        None => None,
+    };
+
+    Ok(AppNotification {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        title: row.get(2)?,
+        message: row.get(3)?,
+        data,
+        is_read: row.get::<i64>(5)? != 0,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
 }
