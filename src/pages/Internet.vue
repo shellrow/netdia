@@ -30,10 +30,10 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
 // Speed Test
 type Direction = "download" | "upload";
 type Result = "full" | "timeout" | "canceled" | "error";
-type SpeedtestServer = "cloudflare" | "foctal";
+type SpeedtestType = "byte-stream" | "file-download";
 
 const speedDirection = ref<Direction>("download");
-const speedtestServer = ref<SpeedtestServer>("foctal");
+const speedtestType = ref<SpeedtestType>("byte-stream");
 
 const sizeOptions = ref([
   { label: "100 KB", bytes: 100 * 1024 },
@@ -81,6 +81,22 @@ const elapsedText = computed(() => fmtDuration(stElapsedMs.value));
 
 const maxDurationMs = 30_000;
 
+const speedtestTypeOptions: Array<{ label: string; value: SpeedtestType }> = [
+  { label: "Byte Stream", value: "byte-stream" },
+  { label: "File Download", value: "file-download" },
+];
+
+const directionOptions = computed(() => [
+  { label: "Download", value: "download" },
+  {
+    label: "Upload",
+    value: "upload",
+    disabled: speedtestType.value === "file-download",
+  },
+]);
+
+const isUploadDisabled = computed(() => speedtestType.value === "file-download");
+
 function resetSpeedtestUi() {
   stElapsedMs.value = 0;
   stTransferred.value = 0;
@@ -105,7 +121,7 @@ async function startSpeedtest() {
 
     latencyRunning.value = true;
     try {
-      await invoke("measure_latency", { server: speedtestServer.value });
+      await invoke("measure_latency");
     } catch {
       latencyRunning.value = false;
       latencyMs.value = null;
@@ -117,8 +133,8 @@ async function startSpeedtest() {
     const dir = speedDirection.value ?? "download";
 
     const setting = {
-      server: speedtestServer.value,
       direction: dir,
+      test_type: speedtestType.value,
       target_bytes: size,
       max_duration_ms: maxDurationMs,
     };
@@ -189,7 +205,10 @@ let unlistenDone: UnlistenFn | null = null;
 watch(speedDirection, () => {
   if (!stRunning.value) resetSpeedtestUi();
 });
-watch(speedtestServer, () => {
+watch(speedtestType, (type) => {
+  if (type === "file-download" && speedDirection.value === "upload") {
+    speedDirection.value = "download";
+  }
   if (!stRunning.value) resetSpeedtestUi();
 });
 watch(selectedSize, () => {
@@ -376,13 +395,19 @@ function fmtDuration(ms: number): string {
                 </div>
                 <div class="flex items-center gap-2">
                   <SelectButton
-                    v-model="speedDirection"
-                    :options="[
-                      { label: 'Download', value: 'download' },
-                      { label: 'Upload', value: 'upload' }
-                    ]"
+                    v-model="speedtestType"
+                    :options="speedtestTypeOptions"
                     optionLabel="label"
                     optionValue="value"
+                    :disabled="stRunning || stStarting"
+                    size="small"
+                  />
+                  <SelectButton
+                    v-model="speedDirection"
+                    :options="directionOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    optionDisabled="disabled"
                     :disabled="stRunning || stStarting"
                     size="small"
                   />
@@ -462,6 +487,10 @@ function fmtDuration(ms: number): string {
                 </div>
 
                 <ProgressBar :value="progressPct" class="mt-2" />
+
+                <div v-if="isUploadDisabled" class="mt-2 text-sm text-surface-500">
+                  File download tests are download-only, so upload is unavailable.
+                </div>
 
                 <div v-if="stDoneResult === 'timeout'" class="mt-2 text-sm text-yellow-500">
                   Timed out (30s). Speed is calculated from actual transferred bytes / actual elapsed time.

@@ -35,8 +35,8 @@ pub async fn start_speedtest(
     let handle = tauri::async_runtime::spawn(async move {
         let r = net::speedtest::run_speedtest(
             &app2,
-            setting.server,
             setting.direction.clone(),
+            setting.test_type,
             setting.target_bytes,
             max,
         )

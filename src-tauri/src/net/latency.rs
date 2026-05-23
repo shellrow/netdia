@@ -1,40 +1,23 @@
 use anyhow::{Context, Result};
-use reqwest::{header, Client};
+use reqwest::Client;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
-use crate::model::speedtest::{LatencyDonePayload, LatencyUpdatePayload, SpeedtestServer};
+use crate::model::speedtest::{LatencyDonePayload, LatencyUpdatePayload};
 
-const CLOUDFLARE_REFERER: &str = "https://speed.cloudflare.com/";
+const FOCTAL_SPEEDTEST_BASE_URL: &str = "https://speed.foctal.com";
 const TICK_WAIT: Duration = Duration::from_millis(120);
 pub(crate) const DEFAULT_PING_COUNT: u32 = 7;
 
-fn build_client(referer: Option<&str>) -> Result<Client> {
-    let mut builder = Client::builder().timeout(Duration::from_secs(5));
-    if let Some(referer) = referer {
-        let mut headers = header::HeaderMap::new();
-        headers.insert(header::REFERER, header::HeaderValue::from_str(referer)?);
-        builder = builder.default_headers(headers);
-    }
-    builder.build().context("build reqwest client")
+fn build_client() -> Result<Client> {
+    Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .context("build reqwest client")
 }
 
-fn base_url(server: SpeedtestServer) -> &'static str {
-    match server {
-        SpeedtestServer::Cloudflare => "https://speed.cloudflare.com",
-        SpeedtestServer::Foctal => "https://speed.foctal.com",
-    }
-}
-
-fn referer(server: SpeedtestServer) -> Option<&'static str> {
-    match server {
-        SpeedtestServer::Cloudflare => Some(CLOUDFLARE_REFERER),
-        SpeedtestServer::Foctal => None,
-    }
-}
-
-fn latency_probe_url(server: SpeedtestServer) -> String {
-    format!("{}/__down?bytes=0", base_url(server))
+fn latency_probe_url() -> String {
+    format!("{FOCTAL_SPEEDTEST_BASE_URL}/__down?bytes=0")
 }
 
 async fn measure_with_client<F>(
@@ -71,13 +54,9 @@ where
     Ok(())
 }
 
-pub async fn measure_latency_jitter(
-    app: &AppHandle,
-    server: SpeedtestServer,
-    samples: u32,
-) -> Result<()> {
-    let client = build_client(referer(server))?;
-    let probe_url = latency_probe_url(server);
+pub async fn measure_latency_jitter(app: &AppHandle, samples: u32) -> Result<()> {
+    let client = build_client()?;
+    let probe_url = latency_probe_url();
 
     measure_with_client(app, &client, samples, |client| {
         let probe_url = probe_url.clone();

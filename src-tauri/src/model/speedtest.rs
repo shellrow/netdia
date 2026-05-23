@@ -8,13 +8,13 @@ pub enum SpeedtestDirection {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum SpeedtestServer {
-    Cloudflare,
-    Foctal,
+#[serde(rename_all = "kebab-case")]
+pub enum SpeedtestType {
+    ByteStream,
+    FileDownload,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SpeedtestResult {
     Full,
@@ -25,8 +25,8 @@ pub enum SpeedtestResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpeedtestSetting {
-    pub server: SpeedtestServer,
     pub direction: SpeedtestDirection,
+    pub test_type: SpeedtestType,
     pub target_bytes: u64,
     /// default 30_000
     pub max_duration_ms: Option<u64>,

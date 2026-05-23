@@ -7,19 +7,17 @@ use std::{
 };
 
 use crate::model::speedtest::{
-    SpeedtestDirection, SpeedtestDonePayload, SpeedtestResult, SpeedtestServer,
+    SpeedtestDirection, SpeedtestDonePayload, SpeedtestResult, SpeedtestType,
     SpeedtestUpdatePayload,
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_util::StreamExt;
-use reqwest::{header, Client, RequestBuilder};
+use reqwest::{Client, RequestBuilder};
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
 
-const CLOUDFLARE_SPEEDTEST_BASE_URL: &str = "https://speed.cloudflare.com";
 const FOCTAL_SPEEDTEST_BASE_URL: &str = "https://speed.foctal.com";
-const CLOUDFLARE_REFERER: &str = "https://speed.cloudflare.com/";
 pub(crate) const MAX_DURATION: Duration = Duration::from_secs(30);
 const TICK: Duration = Duration::from_millis(250);
 const CHUNK_SIZE: usize = 64 * 1024;
@@ -32,10 +30,7 @@ struct TokenResp {
 }
 
 #[derive(Clone)]
-enum SpeedtestAuth {
-    None,
-    Token(String),
-}
+struct SpeedtestAuth(String);
 
 /// State for upload stream
 #[derive(Clone)]
@@ -52,20 +47,6 @@ fn mbps(bytes: u64, secs: f64) -> f64 {
     }
 }
 
-fn base_url(server: SpeedtestServer) -> &'static str {
-    match server {
-        SpeedtestServer::Cloudflare => CLOUDFLARE_SPEEDTEST_BASE_URL,
-        SpeedtestServer::Foctal => FOCTAL_SPEEDTEST_BASE_URL,
-    }
-}
-
-fn referer(server: SpeedtestServer) -> Option<&'static str> {
-    match server {
-        SpeedtestServer::Cloudflare => Some(CLOUDFLARE_REFERER),
-        SpeedtestServer::Foctal => None,
-    }
-}
-
 async fn get_token(client: &Client) -> Result<String> {
     let url = format!("{}/token", FOCTAL_SPEEDTEST_BASE_URL);
     let resp = client.get(url).send().await.context("GET /token")?;
@@ -77,55 +58,72 @@ async fn get_token(client: &Client) -> Result<String> {
 }
 
 fn apply_upload_auth(builder: RequestBuilder, auth: &SpeedtestAuth) -> RequestBuilder {
-    match auth {
-        SpeedtestAuth::None => builder,
-        SpeedtestAuth::Token(token) => builder.bearer_auth(token),
-    }
+    builder.bearer_auth(&auth.0)
 }
 
-fn build_download_url(server: SpeedtestServer, target_bytes: u64, auth: &SpeedtestAuth) -> String {
-    let mut url = format!("{}/__down?bytes={target_bytes}", base_url(server));
-    if let SpeedtestAuth::Token(token) = auth {
-        url.push_str("&token=");
-        url.push_str(token);
-    }
+fn build_download_url(target_bytes: u64, auth: &SpeedtestAuth) -> String {
+    let mut url = format!("{FOCTAL_SPEEDTEST_BASE_URL}/__down?bytes={target_bytes}");
+    url.push_str("&token=");
+    url.push_str(&auth.0);
     url
 }
 
-fn build_upload_url(server: SpeedtestServer, auth: &SpeedtestAuth) -> String {
-    let mut url = format!("{}/__up", base_url(server));
-    if let SpeedtestAuth::Token(token) = auth {
-        url.push_str("?token=");
-        url.push_str(token);
+fn size_label_for_bytes(target_bytes: u64) -> Option<&'static str> {
+    match target_bytes {
+        102_400 => Some("100kb"),
+        1_048_576 => Some("1mb"),
+        10_485_760 => Some("10mb"),
+        26_214_400 => Some("25mb"),
+        52_428_800 => Some("50mb"),
+        104_857_600 => Some("100mb"),
+        _ => None,
     }
+}
+
+fn build_file_download_url(target_bytes: u64, auth: &SpeedtestAuth) -> Result<String> {
+    let size = size_label_for_bytes(target_bytes).context("unsupported file-download size")?;
+
+    let mut url = format!("{FOCTAL_SPEEDTEST_BASE_URL}/__filedown/random/{size}");
+    url.push_str("?token=");
+    url.push_str(&auth.0);
+    Ok(url)
+}
+
+fn build_upload_url(auth: &SpeedtestAuth) -> String {
+    let mut url = format!("{FOCTAL_SPEEDTEST_BASE_URL}/__up");
+    url.push_str("?token=");
+    url.push_str(&auth.0);
     url
 }
 
-fn build_client(max_duration: Duration, referer: Option<&str>) -> Result<Client> {
-    let mut builder = Client::builder().timeout(max_duration + Duration::from_secs(5));
-    if let Some(referer) = referer {
-        let mut headers = header::HeaderMap::new();
-        headers.insert(header::REFERER, header::HeaderValue::from_str(referer)?);
-        builder = builder.default_headers(headers);
-    }
-    builder.build().context("build reqwest client")
+fn build_client(max_duration: Duration) -> Result<Client> {
+    Client::builder()
+        .timeout(max_duration + Duration::from_secs(5))
+        .build()
+        .context("build reqwest client")
 }
 
 async fn run_speedtest_with_server(
     app: &AppHandle,
     client: &Client,
-    server: SpeedtestServer,
     auth: &SpeedtestAuth,
     direction: SpeedtestDirection,
+    test_type: SpeedtestType,
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    match direction {
-        SpeedtestDirection::Download => {
-            download_test(app, client, server, auth, target_bytes, max_duration).await?;
+    match (direction, test_type) {
+        (SpeedtestDirection::Download, SpeedtestType::ByteStream) => {
+            download_test(app, client, auth, target_bytes, max_duration).await?;
         }
-        SpeedtestDirection::Upload => {
-            upload_test(app, client, server, auth, target_bytes, max_duration).await?;
+        (SpeedtestDirection::Download, SpeedtestType::FileDownload) => {
+            file_download_test(app, client, auth, target_bytes, max_duration).await?;
+        }
+        (SpeedtestDirection::Upload, SpeedtestType::ByteStream) => {
+            upload_test(app, client, auth, target_bytes, max_duration).await?;
+        }
+        (SpeedtestDirection::Upload, SpeedtestType::FileDownload) => {
+            anyhow::bail!("upload is not available for file-download tests");
         }
     }
 
@@ -134,23 +132,20 @@ async fn run_speedtest_with_server(
 
 pub async fn run_speedtest(
     app: &AppHandle,
-    server: SpeedtestServer,
     direction: SpeedtestDirection,
+    test_type: SpeedtestType,
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    let client = build_client(max_duration, referer(server))?;
-    let auth = match server {
-        SpeedtestServer::Cloudflare => SpeedtestAuth::None,
-        SpeedtestServer::Foctal => SpeedtestAuth::Token(get_token(&client).await?),
-    };
+    let client = build_client(max_duration)?;
+    let auth = SpeedtestAuth(get_token(&client).await?);
 
     run_speedtest_with_server(
         app,
         &client,
-        server,
         &auth,
         direction,
+        test_type,
         target_bytes,
         max_duration,
     )
@@ -160,12 +155,11 @@ pub async fn run_speedtest(
 async fn download_test(
     app: &AppHandle,
     client: &Client,
-    server: SpeedtestServer,
     auth: &SpeedtestAuth,
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    let url = build_download_url(server, target_bytes, auth);
+    let url = build_download_url(target_bytes, auth);
     let resp = client.get(url).send().await.context("GET download")?;
 
     if !resp.status().is_success() {
@@ -258,15 +252,114 @@ async fn download_test(
     Ok(())
 }
 
-async fn upload_test(
+async fn file_download_test(
     app: &AppHandle,
     client: &Client,
-    server: SpeedtestServer,
     auth: &SpeedtestAuth,
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    let url = build_upload_url(server, auth);
+    let url = build_file_download_url(target_bytes, auth)?;
+    let resp = client.get(url).send().await.context("GET file download")?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("file download http {}", resp.status());
+    }
+
+    let start = Instant::now();
+    let mut last_tick = start;
+    let mut last_bytes: u64 = 0;
+    let mut transferred: u64 = 0;
+
+    let mut stream = resp.bytes_stream();
+    let mut ticker = tokio::time::interval(TICK);
+
+    let mut result = SpeedtestResult::Full;
+
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                let elapsed = start.elapsed();
+                let elapsed_ms = elapsed.as_millis() as u64;
+
+                let dt = (Instant::now() - last_tick).as_secs_f64().max(1e-6);
+                let dbytes = transferred.saturating_sub(last_bytes);
+                let instant = mbps(dbytes, dt);
+                let avg = mbps(transferred, elapsed.as_secs_f64());
+
+                last_tick = Instant::now();
+                last_bytes = transferred;
+
+                emit_speedtest_update(
+                    app,
+                    SpeedtestDirection::Download,
+                    elapsed_ms,
+                    transferred,
+                    target_bytes,
+                    instant,
+                    avg,
+                );
+
+                if elapsed >= max_duration {
+                    result = SpeedtestResult::Timeout;
+                    break;
+                }
+                if transferred >= target_bytes {
+                    result = SpeedtestResult::Full;
+                    break;
+                }
+            }
+            chunk = stream.next() => {
+                match chunk {
+                    Some(Ok(b)) => {
+                        transferred += b.len() as u64;
+                        if transferred >= target_bytes {
+                            result = SpeedtestResult::Full;
+                            break;
+                        }
+                        if start.elapsed() >= max_duration {
+                            result = SpeedtestResult::Timeout;
+                            break;
+                        }
+                    }
+                    Some(Err(e)) => {
+                        return Err(anyhow::anyhow!(e));
+                    }
+                    None => {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let elapsed = start.elapsed();
+    let avg = mbps(transferred, elapsed.as_secs_f64());
+
+    emit_speedtest_done(
+        app,
+        SpeedtestDonePayload {
+            direction: SpeedtestDirection::Download,
+            result,
+            elapsed_ms: elapsed.as_millis() as u64,
+            transferred_bytes: transferred,
+            target_bytes,
+            avg_mbps: avg,
+            message: None,
+        },
+    );
+
+    Ok(())
+}
+
+async fn upload_test(
+    app: &AppHandle,
+    client: &Client,
+    auth: &SpeedtestAuth,
+    target_bytes: u64,
+    max_duration: Duration,
+) -> Result<()> {
+    let url = build_upload_url(auth);
 
     let start = Instant::now();
     let sent = Arc::new(AtomicU64::new(0));
