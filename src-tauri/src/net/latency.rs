@@ -5,15 +5,85 @@ use tauri::{AppHandle, Emitter};
 
 use crate::model::speedtest::{LatencyDonePayload, LatencyUpdatePayload};
 
-const PING_URL: &str = "https://speedtest.foctal.com/ping";
+const FOCTAL_SPEEDTEST_BASE_URL: &str = "https://speed.foctal.com";
 const TICK_WAIT: Duration = Duration::from_millis(120);
 pub(crate) const DEFAULT_PING_COUNT: u32 = 7;
 
-#[derive(serde::Deserialize)]
-struct PingResp {
-    #[allow(dead_code)]
-    ts: i64,
-    colo: Option<String>,
+fn build_client() -> Result<Client> {
+    Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .context("build reqwest client")
+}
+
+fn latency_probe_url() -> String {
+    format!("{FOCTAL_SPEEDTEST_BASE_URL}/__down?bytes=0")
+}
+
+async fn measure_with_client<F>(
+    app: &AppHandle,
+    client: &Client,
+    samples: u32,
+    mut probe: F,
+) -> Result<()>
+where
+    F: for<'a> FnMut(
+        &'a Client,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<(f64, Option<String>)>> + Send + 'a>,
+    >,
+{
+    let mut rtts: Vec<f64> = Vec::with_capacity(samples as usize);
+    let mut colo: Option<String> = None;
+
+    for i in 0..samples {
+        let (elapsed, sample_colo) = probe(client).await?;
+        rtts.push(elapsed);
+
+        if colo.is_none() {
+            colo = sample_colo;
+        }
+
+        emit_latency_update(app, i + 1, samples, elapsed);
+
+        tokio::time::sleep(TICK_WAIT).await;
+    }
+
+    emit_latency_done(app, rtts, colo);
+
+    Ok(())
+}
+
+pub async fn measure_latency_jitter(app: &AppHandle, samples: u32) -> Result<()> {
+    let client = build_client()?;
+    let probe_url = latency_probe_url();
+
+    measure_with_client(app, &client, samples, |client| {
+        let probe_url = probe_url.clone();
+        Box::pin(async move {
+            let t0 = Instant::now();
+            let resp = client
+                .get(&probe_url)
+                .send()
+                .await
+                .with_context(|| format!("GET latency probe: {probe_url}"))?;
+            let elapsed = t0.elapsed().as_secs_f64() * 1000.0;
+
+            if !resp.status().is_success() {
+                anyhow::bail!("latency probe http {}", resp.status());
+            }
+
+            let colo = resp
+                .headers()
+                .get("cf-meta-colo")
+                .or_else(|| resp.headers().get("cf-ray"))
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value.to_string());
+
+            Ok((elapsed, colo))
+        })
+    })
+    .await
 }
 
 fn median(mut v: Vec<f64>) -> f64 {
@@ -38,52 +108,29 @@ fn stddev(v: &[f64]) -> f64 {
     var.sqrt()
 }
 
-pub async fn measure_latency_jitter(app: &AppHandle, samples: u32) -> Result<()> {
-    let client = Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .context("build reqwest client")?;
+fn emit_latency_update(app: &AppHandle, sample: u32, total: u32, rtt_ms: f64) {
+    let _ = app.emit(
+        "latency:update",
+        LatencyUpdatePayload {
+            phase: "running".into(),
+            sample,
+            total,
+            rtt_ms,
+        },
+    );
+}
 
-    let mut rtts: Vec<f64> = Vec::with_capacity(samples as usize);
-    let mut colo: Option<String> = None;
-
-    for i in 0..samples {
-        let t0 = Instant::now();
-        let resp = client.get(PING_URL).send().await.context("GET /ping")?;
-        let elapsed = t0.elapsed().as_secs_f64() * 1000.0;
-        rtts.push(elapsed);
-
-        if colo.is_none() {
-            if let Ok(p) = resp.json::<PingResp>().await {
-                colo = p.colo;
-            }
-        }
-
-        let _ = app.emit(
-            "latency:update",
-            LatencyUpdatePayload {
-                phase: "running".into(),
-                sample: i + 1,
-                total: samples,
-                rtt_ms: elapsed,
-            },
-        );
-
-        tokio::time::sleep(TICK_WAIT).await;
-    }
-
-    let lat = median(rtts.clone());
-    let jit = stddev(&rtts);
+fn emit_latency_done(app: &AppHandle, samples: Vec<f64>, colo: Option<String>) {
+    let latency_ms = median(samples.clone());
+    let jitter_ms = stddev(&samples);
 
     let _ = app.emit(
         "latency:done",
         LatencyDonePayload {
-            latency_ms: lat,
-            jitter_ms: jit,
-            samples: rtts,
+            latency_ms,
+            jitter_ms,
+            samples,
             colo,
         },
     );
-
-    Ok(())
 }

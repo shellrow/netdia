@@ -121,7 +121,7 @@ onMounted(async () => {
           <RouterLink
             :to="{ name: 'settings' }"
             :class="[
-              'flex items-center p-2 gap-2 text-surface-900 dark:text-surface-0 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors duration-150',
+              'flex items-center p-2 gap-2 text-surface-900 dark:text-surface-0 rounded-lg hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors duration-150 min-h-10',
               isCompact ? 'justify-center' : ''
             ]"
             aria-label="Settings"

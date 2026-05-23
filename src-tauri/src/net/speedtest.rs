@@ -7,19 +7,23 @@ use std::{
 };
 
 use crate::model::speedtest::{
-    SpeedtestDirection, SpeedtestDonePayload, SpeedtestResult, SpeedtestUpdatePayload,
+    SpeedtestDirection, SpeedtestDonePayload, SpeedtestResult, SpeedtestType,
+    SpeedtestUpdatePayload,
 };
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_util::StreamExt;
-use reqwest::Client;
+use reqwest::{Client, RequestBuilder};
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 
-const SPEEDTEST_BASE_URL: &str = "https://speedtest.foctal.com";
+const FOCTAL_SPEEDTEST_BASE_URL: &str = "https://speed.foctal.com";
 pub(crate) const MAX_DURATION: Duration = Duration::from_secs(30);
 const TICK: Duration = Duration::from_millis(250);
 const CHUNK_SIZE: usize = 64 * 1024;
+const WARMUP: Duration = Duration::from_millis(750);
 
 #[derive(Deserialize)]
 struct TokenResp {
@@ -28,11 +32,28 @@ struct TokenResp {
     expires_in: i64,
 }
 
+#[derive(Clone)]
+struct SpeedtestAuth(String);
+
 /// State for upload stream
 #[derive(Clone)]
 struct UpState {
     remaining: u64,
+    cancel: CancellationToken,
+}
+
+#[derive(Clone, Copy)]
+struct StableAverage {
+    elapsed: Duration,
+    transferred_bytes: u64,
+}
+
+struct ProgressState {
     start: Instant,
+    last_tick: Instant,
+    last_bytes: u64,
+    warmup_marked: bool,
+    warmup_bytes: u64,
 }
 
 fn mbps(bytes: u64, secs: f64) -> f64 {
@@ -44,7 +65,7 @@ fn mbps(bytes: u64, secs: f64) -> f64 {
 }
 
 async fn get_token(client: &Client) -> Result<String> {
-    let url = format!("{}/token", SPEEDTEST_BASE_URL);
+    let url = format!("{}/token", FOCTAL_SPEEDTEST_BASE_URL);
     let resp = client.get(url).send().await.context("GET /token")?;
     if !resp.status().is_success() {
         anyhow::bail!("token http {}", resp.status());
@@ -53,138 +74,434 @@ async fn get_token(client: &Client) -> Result<String> {
     Ok(tr.token)
 }
 
-pub async fn run_speedtest(
+fn apply_upload_auth(builder: RequestBuilder, auth: &SpeedtestAuth) -> RequestBuilder {
+    builder.bearer_auth(&auth.0)
+}
+
+fn build_download_url(target_bytes: u64, auth: &SpeedtestAuth) -> String {
+    let mut url = format!("{FOCTAL_SPEEDTEST_BASE_URL}/__down?bytes={target_bytes}");
+    url.push_str("&token=");
+    url.push_str(&auth.0);
+    url
+}
+
+fn size_label_for_bytes(target_bytes: u64) -> Option<&'static str> {
+    match target_bytes {
+        102_400 => Some("100kb"),
+        1_048_576 => Some("1mb"),
+        10_485_760 => Some("10mb"),
+        26_214_400 => Some("25mb"),
+        52_428_800 => Some("50mb"),
+        104_857_600 => Some("100mb"),
+        _ => None,
+    }
+}
+
+fn build_file_download_url(target_bytes: u64, auth: &SpeedtestAuth) -> Result<String> {
+    let size = size_label_for_bytes(target_bytes).context("unsupported file-download size")?;
+
+    let mut url = format!("{FOCTAL_SPEEDTEST_BASE_URL}/__filedown/random/{size}");
+    url.push_str("?token=");
+    url.push_str(&auth.0);
+    Ok(url)
+}
+
+fn build_upload_url(auth: &SpeedtestAuth) -> String {
+    let mut url = format!("{FOCTAL_SPEEDTEST_BASE_URL}/__up");
+    url.push_str("?token=");
+    url.push_str(&auth.0);
+    url
+}
+
+fn build_client(max_duration: Duration) -> Result<Client> {
+    Client::builder()
+        .timeout(max_duration + Duration::from_secs(5))
+        .build()
+        .context("build reqwest client")
+}
+
+fn parallel_streams(
+    direction: SpeedtestDirection,
+    test_type: SpeedtestType,
+    target_bytes: u64,
+) -> usize {
+    match (direction, test_type, target_bytes) {
+        (_, _, 0..=26_214_400) => 4,
+        (SpeedtestDirection::Download, SpeedtestType::ByteStream, 26_214_401..=52_428_800) => 4,
+        (_, _, 26_214_401..=52_428_800) => 3,
+        (SpeedtestDirection::Download, SpeedtestType::ByteStream, _) => 3,
+        (_, _, _) => 2,
+    }
+}
+
+fn total_target_bytes(per_stream_target: u64, streams: usize) -> u64 {
+    per_stream_target.saturating_mul(streams as u64)
+}
+
+fn init_progress() -> ProgressState {
+    let start = Instant::now();
+    ProgressState {
+        start,
+        last_tick: start,
+        last_bytes: 0,
+        warmup_marked: false,
+        warmup_bytes: 0,
+    }
+}
+
+fn compute_stable_average(
+    progress: &mut ProgressState,
+    transferred: u64,
+    elapsed: Duration,
+) -> StableAverage {
+    if !progress.warmup_marked && elapsed >= WARMUP {
+        progress.warmup_marked = true;
+        progress.warmup_bytes = transferred;
+    }
+
+    if progress.warmup_marked {
+        StableAverage {
+            elapsed: elapsed.saturating_sub(WARMUP),
+            transferred_bytes: transferred.saturating_sub(progress.warmup_bytes),
+        }
+    } else {
+        StableAverage {
+            elapsed,
+            transferred_bytes: transferred,
+        }
+    }
+}
+
+fn emit_progress_update(
     app: &AppHandle,
     direction: SpeedtestDirection,
+    progress: &mut ProgressState,
+    transferred: u64,
+    target_bytes: u64,
+) {
+    let elapsed = progress.start.elapsed();
+    let elapsed_ms = elapsed.as_millis() as u64;
+
+    let now = Instant::now();
+    let dt = (now - progress.last_tick).as_secs_f64().max(1e-6);
+    let dbytes = transferred.saturating_sub(progress.last_bytes);
+    let instant = mbps(dbytes, dt);
+
+    let stable = compute_stable_average(progress, transferred, elapsed);
+    let avg = mbps(stable.transferred_bytes, stable.elapsed.as_secs_f64());
+
+    progress.last_tick = now;
+    progress.last_bytes = transferred;
+
+    emit_speedtest_update(
+        app,
+        direction,
+        elapsed_ms,
+        transferred,
+        target_bytes,
+        instant,
+        avg,
+    );
+}
+
+fn final_average(progress: &mut ProgressState, transferred: u64) -> (u64, f64) {
+    let elapsed = progress.start.elapsed();
+    let stable = compute_stable_average(progress, transferred, elapsed);
+    let avg = mbps(stable.transferred_bytes, stable.elapsed.as_secs_f64());
+    (elapsed.as_millis() as u64, avg)
+}
+
+async fn run_speedtest_with_server(
+    app: &AppHandle,
+    client: &Client,
+    auth: &SpeedtestAuth,
+    direction: SpeedtestDirection,
+    test_type: SpeedtestType,
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    let client = Client::builder()
-        .timeout(max_duration + Duration::from_secs(5))
-        .build()
-        .context("build reqwest client")?;
+    let stream_count = parallel_streams(direction.clone(), test_type, target_bytes);
 
-    let token = get_token(&client).await?;
-
-    match direction {
-        SpeedtestDirection::Download => {
-            download_test(app, &client, &token, target_bytes, max_duration).await?;
+    match (direction, test_type) {
+        (SpeedtestDirection::Download, SpeedtestType::ByteStream) => {
+            download_test(app, client, auth, target_bytes, stream_count, max_duration).await?;
         }
-        SpeedtestDirection::Upload => {
-            upload_test(app, &client, &token, target_bytes, max_duration).await?;
+        (SpeedtestDirection::Download, SpeedtestType::FileDownload) => {
+            file_download_test(app, client, auth, target_bytes, stream_count, max_duration).await?;
+        }
+        (SpeedtestDirection::Upload, SpeedtestType::ByteStream) => {
+            upload_test(app, client, auth, target_bytes, stream_count, max_duration).await?;
+        }
+        (SpeedtestDirection::Upload, SpeedtestType::FileDownload) => {
+            anyhow::bail!("upload is not available for file-download tests");
         }
     }
 
     Ok(())
 }
 
-async fn download_test(
+pub async fn run_speedtest(
     app: &AppHandle,
-    client: &Client,
-    token: &str,
+    direction: SpeedtestDirection,
+    test_type: SpeedtestType,
     target_bytes: u64,
     max_duration: Duration,
 ) -> Result<()> {
-    let url = format!("{}/download?bytes={}", SPEEDTEST_BASE_URL, target_bytes);
+    let client = build_client(max_duration)?;
+    let auth = SpeedtestAuth(get_token(&client).await?);
 
-    let resp = client
-        .get(url)
-        .bearer_auth(token)
-        .send()
-        .await
-        .context("GET /download")?;
+    run_speedtest_with_server(
+        app,
+        &client,
+        &auth,
+        direction,
+        test_type,
+        target_bytes,
+        max_duration,
+    )
+    .await
+}
 
-    if !resp.status().is_success() {
-        anyhow::bail!("download http {}", resp.status());
+async fn download_test(
+    app: &AppHandle,
+    client: &Client,
+    auth: &SpeedtestAuth,
+    per_stream_target_bytes: u64,
+    stream_count: usize,
+    max_duration: Duration,
+) -> Result<()> {
+    let target_bytes = total_target_bytes(per_stream_target_bytes, stream_count);
+    let transferred = Arc::new(AtomicU64::new(0));
+    let cancel = CancellationToken::new();
+    let mut join_set = JoinSet::new();
+
+    for _ in 0..stream_count {
+        let client = client.clone();
+        let auth = auth.clone();
+        let transferred = transferred.clone();
+        let cancel = cancel.clone();
+
+        join_set.spawn(async move {
+            let url = build_download_url(per_stream_target_bytes, &auth);
+            let resp = client.get(url).send().await.context("GET download")?;
+
+            if !resp.status().is_success() {
+                anyhow::bail!("download http {}", resp.status());
+            }
+
+            let mut stream = resp.bytes_stream();
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        break;
+                    }
+                    chunk = stream.next() => {
+                        match chunk {
+                            Some(Ok(b)) => {
+                                transferred.fetch_add(b.len() as u64, Ordering::Relaxed);
+                            }
+                            Some(Err(e)) => {
+                                return Err(anyhow::anyhow!(e));
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            }
+
+            Ok::<(), anyhow::Error>(())
+        });
     }
 
-    let start = Instant::now();
-    let mut last_tick = start;
-    let mut last_bytes: u64 = 0;
-    let mut transferred: u64 = 0;
-
-    let mut stream = resp.bytes_stream();
+    let mut progress = init_progress();
     let mut ticker = tokio::time::interval(TICK);
-
     let mut result = SpeedtestResult::Full;
+    let mut completed = 0usize;
 
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let elapsed = start.elapsed();
-                let elapsed_ms = elapsed.as_millis() as u64;
+                let transferred_now = transferred.load(Ordering::Relaxed);
+                emit_progress_update(app, SpeedtestDirection::Download, &mut progress, transferred_now, target_bytes);
 
-                let dt = (Instant::now() - last_tick).as_secs_f64().max(1e-6);
-                let dbytes = transferred.saturating_sub(last_bytes);
-                let instant = mbps(dbytes, dt);
-                let avg = mbps(transferred, elapsed.as_secs_f64());
-
-                last_tick = Instant::now();
-                last_bytes = transferred;
-
-                let _ = app.emit("speedtest:update", SpeedtestUpdatePayload{
-                    direction: SpeedtestDirection::Download,
-                    phase: "running".into(),
-                    elapsed_ms,
-                    transferred_bytes: transferred,
-                    target_bytes,
-                    instant_mbps: instant,
-                    avg_mbps: avg,
-                });
-
+                let elapsed = progress.start.elapsed();
                 if elapsed >= max_duration {
                     result = SpeedtestResult::Timeout;
+                    cancel.cancel();
+                    join_set.abort_all();
                     break;
                 }
-                if transferred >= target_bytes {
+                if transferred_now >= target_bytes {
                     result = SpeedtestResult::Full;
+                    cancel.cancel();
                     break;
                 }
             }
-            chunk = stream.next() => {
-                match chunk {
-                    Some(Ok(b)) => {
-                        transferred += b.len() as u64;
-                        if transferred >= target_bytes {
-                            result = SpeedtestResult::Full;
-                            break;
-                        }
-                        if start.elapsed() >= max_duration {
-                            result = SpeedtestResult::Timeout;
+            joined = join_set.join_next(), if completed < stream_count => {
+                match joined {
+                    Some(Ok(Ok(()))) => {
+                        completed += 1;
+                        if completed == stream_count {
                             break;
                         }
                     }
-                    Some(Err(e)) => {
-                        // Stream error or aborted
-                        let _ = app.emit("speedtest:done", SpeedtestDonePayload{
-                            direction: SpeedtestDirection::Download,
-                            result: SpeedtestResult::Error,
-                            elapsed_ms: start.elapsed().as_millis() as u64,
-                            transferred_bytes: transferred,
-                            target_bytes,
-                            avg_mbps: mbps(transferred, start.elapsed().as_secs_f64()),
-                            message: Some(e.to_string()),
-                        });
-                        return Err(anyhow::anyhow!(e));
+                    Some(Ok(Err(err))) => {
+                        cancel.cancel();
+                        join_set.abort_all();
+                        return Err(err);
                     }
-                    None => {
-                        // End of stream
-                        break;
+                    Some(Err(join_err)) => {
+                        if join_err.is_cancelled() {
+                            break;
+                        }
+                        cancel.cancel();
+                        join_set.abort_all();
+                        return Err(anyhow::anyhow!(join_err));
                     }
+                    None => break,
                 }
             }
         }
     }
 
-    let elapsed = start.elapsed();
-    let avg = mbps(transferred, elapsed.as_secs_f64());
+    cancel.cancel();
+    join_set.abort_all();
+    while join_set.join_next().await.is_some() {}
 
-    let _ = app.emit(
-        "speedtest:done",
+    let transferred = transferred.load(Ordering::Relaxed);
+    let (elapsed_ms, avg) = final_average(&mut progress, transferred);
+
+    emit_speedtest_done(
+        app,
         SpeedtestDonePayload {
             direction: SpeedtestDirection::Download,
             result,
-            elapsed_ms: elapsed.as_millis() as u64,
+            elapsed_ms,
+            transferred_bytes: transferred,
+            target_bytes,
+            avg_mbps: avg,
+            message: None,
+        },
+    );
+
+    Ok(())
+}
+
+async fn file_download_test(
+    app: &AppHandle,
+    client: &Client,
+    auth: &SpeedtestAuth,
+    per_stream_target_bytes: u64,
+    stream_count: usize,
+    max_duration: Duration,
+) -> Result<()> {
+    let target_bytes = total_target_bytes(per_stream_target_bytes, stream_count);
+    let transferred = Arc::new(AtomicU64::new(0));
+    let cancel = CancellationToken::new();
+    let mut join_set = JoinSet::new();
+
+    for _ in 0..stream_count {
+        let client = client.clone();
+        let auth = auth.clone();
+        let transferred = transferred.clone();
+        let cancel = cancel.clone();
+
+        join_set.spawn(async move {
+            let url = build_file_download_url(per_stream_target_bytes, &auth)?;
+            let resp = client.get(url).send().await.context("GET file download")?;
+
+            if !resp.status().is_success() {
+                anyhow::bail!("file download http {}", resp.status());
+            }
+
+            let mut stream = resp.bytes_stream();
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        break;
+                    }
+                    chunk = stream.next() => {
+                        match chunk {
+                            Some(Ok(b)) => {
+                                transferred.fetch_add(b.len() as u64, Ordering::Relaxed);
+                            }
+                            Some(Err(e)) => {
+                                return Err(anyhow::anyhow!(e));
+                            }
+                            None => break,
+                        }
+                    }
+                }
+            }
+
+            Ok::<(), anyhow::Error>(())
+        });
+    }
+
+    let mut progress = init_progress();
+    let mut ticker = tokio::time::interval(TICK);
+    let mut result = SpeedtestResult::Full;
+    let mut completed = 0usize;
+
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                let transferred_now = transferred.load(Ordering::Relaxed);
+                emit_progress_update(app, SpeedtestDirection::Download, &mut progress, transferred_now, target_bytes);
+
+                let elapsed = progress.start.elapsed();
+                if elapsed >= max_duration {
+                    result = SpeedtestResult::Timeout;
+                    cancel.cancel();
+                    join_set.abort_all();
+                    break;
+                }
+                if transferred_now >= target_bytes {
+                    result = SpeedtestResult::Full;
+                    cancel.cancel();
+                    break;
+                }
+            }
+            joined = join_set.join_next(), if completed < stream_count => {
+                match joined {
+                    Some(Ok(Ok(()))) => {
+                        completed += 1;
+                        if completed == stream_count {
+                            break;
+                        }
+                    }
+                    Some(Ok(Err(err))) => {
+                        cancel.cancel();
+                        join_set.abort_all();
+                        return Err(err);
+                    }
+                    Some(Err(join_err)) => {
+                        if join_err.is_cancelled() {
+                            break;
+                        }
+                        cancel.cancel();
+                        join_set.abort_all();
+                        return Err(anyhow::anyhow!(join_err));
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+
+    cancel.cancel();
+    join_set.abort_all();
+    while join_set.join_next().await.is_some() {}
+
+    let transferred = transferred.load(Ordering::Relaxed);
+    let (elapsed_ms, avg) = final_average(&mut progress, transferred);
+
+    emit_speedtest_done(
+        app,
+        SpeedtestDonePayload {
+            direction: SpeedtestDirection::Download,
+            result,
+            elapsed_ms,
             transferred_bytes: transferred,
             target_bytes,
             avg_mbps: avg,
@@ -198,145 +515,126 @@ async fn download_test(
 async fn upload_test(
     app: &AppHandle,
     client: &Client,
-    token: &str,
-    target_bytes: u64,
+    auth: &SpeedtestAuth,
+    per_stream_target_bytes: u64,
+    stream_count: usize,
     max_duration: Duration,
 ) -> Result<()> {
-    let url = format!("{}/upload", SPEEDTEST_BASE_URL);
-
-    let start = Instant::now();
+    let target_bytes = total_target_bytes(per_stream_target_bytes, stream_count);
     let sent = Arc::new(AtomicU64::new(0));
+    let cancel = CancellationToken::new();
+    let mut join_set = JoinSet::new();
 
-    let sent2 = sent.clone();
-    let body_stream = futures_util::stream::try_unfold(
-        UpState {
-            remaining: target_bytes,
-            start,
-        },
-        move |mut st| {
-            let sent2 = sent2.clone();
-            async move {
-                if st.remaining == 0 {
-                    return Ok::<Option<(Bytes, UpState)>, anyhow::Error>(None);
-                }
-                if st.start.elapsed() >= max_duration {
-                    return Ok::<Option<(Bytes, UpState)>, anyhow::Error>(None);
-                }
+    for _ in 0..stream_count {
+        let client = client.clone();
+        let auth = auth.clone();
+        let sent = sent.clone();
+        let cancel = cancel.clone();
 
-                let take = (st.remaining.min(CHUNK_SIZE as u64)) as usize;
-                let buf = Bytes::from(vec![0u8; take]);
+        join_set.spawn(async move {
+            let url = build_upload_url(&auth);
+            let sent2 = sent.clone();
+            let cancel2 = cancel.clone();
+            let body_stream = futures_util::stream::try_unfold(
+                UpState {
+                    remaining: per_stream_target_bytes,
+                    cancel: cancel2,
+                },
+                move |mut st| {
+                    let sent2 = sent2.clone();
+                    async move {
+                        if st.remaining == 0 || st.cancel.is_cancelled() {
+                            return Ok::<Option<(Bytes, UpState)>, anyhow::Error>(None);
+                        }
 
-                st.remaining -= take as u64;
-                sent2.fetch_add(take as u64, Ordering::Relaxed);
+                        let take = (st.remaining.min(CHUNK_SIZE as u64)) as usize;
+                        let buf = Bytes::from(vec![0u8; take]);
 
-                Ok(Some((buf, st)))
+                        st.remaining -= take as u64;
+                        sent2.fetch_add(take as u64, Ordering::Relaxed);
+
+                        Ok(Some((buf, st)))
+                    }
+                },
+            );
+
+            let resp = apply_upload_auth(client.post(url), &auth)
+                .body(reqwest::Body::wrap_stream(body_stream))
+                .send()
+                .await?;
+
+            if !resp.status().is_success() {
+                anyhow::bail!("upload http {}", resp.status());
             }
-        },
-    );
 
-    let req_fut = client
-        .post(url)
-        .bearer_auth(token)
-        .body(reqwest::Body::wrap_stream(body_stream))
-        .send();
+            Ok::<(), anyhow::Error>(())
+        });
+    }
 
-    // Run upload task and emit progress
+    let mut progress = init_progress();
     let mut ticker = tokio::time::interval(TICK);
-    let mut last_tick = start;
-    let mut last_bytes = 0u64;
-
-    let mut req_handle = tokio::spawn(async move { req_fut.await });
-
     let mut result = SpeedtestResult::Full;
+    let mut completed = 0usize;
 
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let elapsed = start.elapsed();
-                let elapsed_ms = elapsed.as_millis() as u64;
                 let transferred = sent.load(Ordering::Relaxed);
+                emit_progress_update(app, SpeedtestDirection::Upload, &mut progress, transferred, target_bytes);
 
-                let dt = (Instant::now() - last_tick).as_secs_f64().max(1e-6);
-                let dbytes = transferred.saturating_sub(last_bytes);
-                let instant = mbps(dbytes, dt);
-                let avg = mbps(transferred, elapsed.as_secs_f64());
-
-                last_tick = Instant::now();
-                last_bytes = transferred;
-
-                let _ = app.emit("speedtest:update", SpeedtestUpdatePayload{
-                    direction: SpeedtestDirection::Upload,
-                    phase: "running".into(),
-                    elapsed_ms,
-                    transferred_bytes: transferred,
-                    target_bytes,
-                    instant_mbps: instant,
-                    avg_mbps: avg,
-                });
-
+                let elapsed = progress.start.elapsed();
                 if elapsed >= max_duration {
                     result = SpeedtestResult::Timeout;
-                    // abort request task (drops request/body)
-                    req_handle.abort();
+                    cancel.cancel();
+                    join_set.abort_all();
                     break;
                 }
                 if transferred >= target_bytes {
                     result = SpeedtestResult::Full;
-                    // Wait for response
+                    cancel.cancel();
                 }
             }
-            r = &mut req_handle => {
-                // Request finished
-                match r {
-                    Ok(Ok(resp)) => {
-                        if !resp.status().is_success() {
-                            result = SpeedtestResult::Error;
-                            let _ = app.emit("speedtest:done", SpeedtestDonePayload{
-                                direction: SpeedtestDirection::Upload,
-                                result,
-                                elapsed_ms: start.elapsed().as_millis() as u64,
-                                transferred_bytes: sent.load(Ordering::Relaxed),
-                                target_bytes,
-                                avg_mbps: mbps(sent.load(Ordering::Relaxed), start.elapsed().as_secs_f64()),
-                                message: Some(format!("upload http {}", resp.status())),
-                            });
-                            anyhow::bail!("upload http {}", resp.status());
+            joined = join_set.join_next(), if completed < stream_count => {
+                match joined {
+                    Some(Ok(Ok(()))) => {
+                        completed += 1;
+                        if completed == stream_count {
+                            break;
                         }
-                        break;
                     }
-                    Ok(Err(e)) => {
-                        result = SpeedtestResult::Error;
-                        let _ = app.emit("speedtest:done", SpeedtestDonePayload{
-                            direction: SpeedtestDirection::Upload,
-                            result,
-                            elapsed_ms: start.elapsed().as_millis() as u64,
-                            transferred_bytes: sent.load(Ordering::Relaxed),
-                            target_bytes,
-                            avg_mbps: mbps(sent.load(Ordering::Relaxed), start.elapsed().as_secs_f64()),
-                            message: Some(e.to_string()),
-                        });
-                        return Err(anyhow::anyhow!(e));
+                    Some(Ok(Err(err))) => {
+                        cancel.cancel();
+                        join_set.abort_all();
+                        return Err(err);
                     }
-                    Err(_join_err) => {
-                        // aborted
-                        result = SpeedtestResult::Canceled;
-                        break;
+                    Some(Err(join_err)) => {
+                        if join_err.is_cancelled() {
+                            result = SpeedtestResult::Canceled;
+                            break;
+                        }
+                        cancel.cancel();
+                        join_set.abort_all();
+                        return Err(anyhow::anyhow!(join_err));
                     }
+                    None => break,
                 }
             }
         }
     }
 
-    let elapsed = start.elapsed();
-    let transferred = sent.load(Ordering::Relaxed);
-    let avg = mbps(transferred, elapsed.as_secs_f64());
+    cancel.cancel();
+    join_set.abort_all();
+    while join_set.join_next().await.is_some() {}
 
-    let _ = app.emit(
-        "speedtest:done",
+    let transferred = sent.load(Ordering::Relaxed);
+    let (elapsed_ms, avg) = final_average(&mut progress, transferred);
+
+    emit_speedtest_done(
+        app,
         SpeedtestDonePayload {
             direction: SpeedtestDirection::Upload,
             result,
-            elapsed_ms: elapsed.as_millis() as u64,
+            elapsed_ms,
             transferred_bytes: transferred,
             target_bytes,
             avg_mbps: avg,
@@ -345,4 +643,31 @@ async fn upload_test(
     );
 
     Ok(())
+}
+
+fn emit_speedtest_update(
+    app: &AppHandle,
+    direction: SpeedtestDirection,
+    elapsed_ms: u64,
+    transferred_bytes: u64,
+    target_bytes: u64,
+    instant_mbps: f64,
+    avg_mbps: f64,
+) {
+    let _ = app.emit(
+        "speedtest:update",
+        SpeedtestUpdatePayload {
+            direction,
+            phase: "running".into(),
+            elapsed_ms,
+            transferred_bytes,
+            target_bytes,
+            instant_mbps,
+            avg_mbps,
+        },
+    );
+}
+
+fn emit_speedtest_done(app: &AppHandle, payload: SpeedtestDonePayload) {
+    let _ = app.emit("speedtest:done", payload);
 }

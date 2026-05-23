@@ -149,11 +149,7 @@ pub async fn host_scan(
 
             let progress = progress.clone();
             let payload = payload.clone();
-            let timeout = timeout;
             let cnt = setting.count.max(1);
-            let total = total;
-            let src_ipv4 = src_ipv4;
-            let src_ipv6 = src_ipv6;
 
             async move {
                 if token.is_cancelled() {
@@ -337,10 +333,10 @@ pub async fn host_scan(
     drop(socket_v4);
     drop(socket_v6);
     if let Some(h) = rx_v4 {
-        let _ = h.abort();
+        h.abort();
     }
     if let Some(h) = rx_v6 {
-        let _ = h.abort();
+        h.abort();
     }
 
     if cancelled || token.is_cancelled() {

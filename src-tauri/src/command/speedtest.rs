@@ -36,6 +36,7 @@ pub async fn start_speedtest(
         let r = net::speedtest::run_speedtest(
             &app2,
             setting.direction.clone(),
+            setting.test_type,
             setting.target_bytes,
             max,
         )

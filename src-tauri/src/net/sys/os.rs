@@ -4,7 +4,7 @@ pub fn hostname() -> String {
     hostname::get()
         .ok()
         .and_then(|os| os.into_string().ok())
-        .unwrap_or_else(|| "unknown".into())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn normalize_os_name(os_type: &os_info::Type) -> String {
@@ -19,14 +19,8 @@ pub fn system_info() -> SysInfo {
     let info = os_info::get();
     let os_type = normalize_os_name(&info.os_type());
     let os_version = info.version().to_string();
-    let edition = info
-        .edition()
-        .unwrap_or_else(|| "unknown".into())
-        .to_string();
-    let codename = info
-        .codename()
-        .unwrap_or_else(|| "unknown".into())
-        .to_string();
+    let edition = info.edition().unwrap_or("unknown").to_string();
+    let codename = info.codename().unwrap_or("unknown").to_string();
     let bitness = if cfg!(target_pointer_width = "64") {
         "64-bit"
     } else {
@@ -95,7 +89,7 @@ fn kernel_version() -> Option<String> {
             return Some(ver_short.trim().to_string());
         }
     }
-    return None;
+    None
 }
 
 #[cfg(target_os = "windows")]
@@ -116,7 +110,7 @@ fn kernel_version() -> Option<String> {
             return Some(format!("Windows NT Kernel {major}.{minor}.{build}"));
         }
     }
-    return None;
+    None
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]

@@ -2,11 +2,9 @@ use anyhow::{bail, Result};
 use std::net::SocketAddr;
 use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
 
-use crate::probe::service::db;
 use crate::probe::service::payload::{PayloadBuilder, PayloadContext};
 use crate::probe::service::probe::{PortProbeResult, ProbeContext};
 use crate::probe::service::read_timeout;
-use crate::probe::service::{build_regex, expand_cpe_templates};
 use crate::probe::service::{
     db::service::tcp_service_db, models::ServiceInfo, probe::ServiceProbe,
 };
@@ -39,53 +37,31 @@ fn looks_like_text_line(s: &str) -> bool {
 /// 3. If neither exists, use the first line (raw)
 fn parse_banner(bytes: &[u8], max_preview: usize) -> BannerLite {
     let raw = String::from_utf8_lossy(bytes);
-    let mut out = BannerLite::default();
-
-    out.raw_text = if raw.len() > max_preview {
+    let raw_text = if raw.len() > max_preview {
         raw[..max_preview].to_string()
     } else {
         raw.to_string()
     };
 
-    let mut lines = out
-        .raw_text
-        .split(|c| c == '\n')
-        .map(|l| l.trim_end_matches('\r'));
+    let mut lines = raw_text.split('\n').map(|l| l.trim_end_matches('\r'));
 
     let first = lines.next().unwrap_or("");
     let second = lines.next().unwrap_or("");
 
-    if looks_like_text_line(first) {
-        out.first_line = Some(first.to_string());
+    let first_line = if looks_like_text_line(first) {
+        Some(first.to_string())
     } else if !second.is_empty() {
-        out.first_line = Some(second.to_string());
+        Some(second.to_string())
     } else if !first.is_empty() {
-        out.first_line = Some(first.to_string());
-    }
-    out
-}
+        Some(first.to_string())
+    } else {
+        None
+    };
 
-/// Match response text against known service signatures for tcp:NULL probes.
-/// (service, cpes)
-fn match_null_signatures(
-    probe_id: &str,
-    text: &str,
-) -> anyhow::Result<Option<(String, Vec<String>)>> {
-    let sigdb = db::service::response_signatures_db();
-    for sig in sigdb {
-        if !sig.probe_id.eq_ignore_ascii_case(probe_id) {
-            continue;
-        }
-        let re = match build_regex(&sig.regex, "") {
-            Ok(r) => r,
-            Err(_) => build_regex(&sig.regex, "i")?,
-        };
-        if let Some(caps) = re.captures(text) {
-            let cpes = expand_cpe_templates(&sig.cpe, &caps);
-            return Ok(Some((sig.service.clone(), cpes)));
-        }
+    BannerLite {
+        first_line,
+        raw_text,
     }
-    Ok(None)
 }
 
 /// Probe implementation for tcp:null (no payload)
@@ -137,18 +113,10 @@ impl NullProbe {
             banner.first_line
         );
 
-        // Match signatures (tcp:NULL)
-        let hit = match_null_signatures("tcp:NULL", &banner.raw_text)?;
-
         // Construct service info
         let mut svc = ServiceInfo::default();
         let tcp_svc_db = tcp_service_db();
         svc.name = tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
-        if let Some((_service_name, cpes)) = hit {
-            if !cpes.is_empty() {
-                svc.cpes = cpes;
-            }
-        }
         // Even if name is still unknown, keep the banner
         svc.banner = banner.first_line.clone();
         svc.raw = Some(banner.raw_text);

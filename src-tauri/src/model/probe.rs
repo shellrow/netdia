@@ -52,14 +52,14 @@ impl ProbeStatus {
     pub fn with_error_message(message: String) -> ProbeStatus {
         ProbeStatus {
             kind: ProbeStatusKind::Error,
-            message: message,
+            message,
         }
     }
     /// Create a new ProbeStatus with Timeout kind and message
     pub fn with_timeout_message(message: String) -> ProbeStatus {
         ProbeStatus {
             kind: ProbeStatusKind::Timeout,
-            message: message,
+            message,
         }
     }
     pub fn is_ok(&self) -> bool {

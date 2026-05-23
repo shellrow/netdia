@@ -1,36 +1,26 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { ref, reactive, computed, onMounted, watch } from "vue";
 import Chart from 'primevue/chart';
 import type { ChartData, ChartOptions } from "chart.js";
 import type { NetworkInterface } from "../types/net";
 import { severityByOper, fmtBps, fmtBytesPerSec } from "../utils/formatter";
 import { hexToRgba } from "../utils/color";
-import { readBpsUnit, type UnitPref } from "../utils/preferences";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
+import { useAppConfig } from "../composables/useAppConfig";
+import { useInterfacesState } from "../composables/useInterfacesState";
 
 type TrafficSample = { ts: number; rx: number; tx: number };
 
-const ifaces = ref<NetworkInterface[]>([]);
+const { interfaces: ifaces, ensureInterfacesState } = useInterfacesState();
 const selectedIndexes = ref<number[]>([]);
 
 const histories = reactive<Record<number, TrafficSample[]>>({});
 
-const bpsUnit = ref<UnitPref>(readBpsUnit(localStorage));
-
-function refreshUnitPref() {
-  bpsUnit.value = readBpsUnit(localStorage);
-}
+const { bpsUnit } = useAppConfig();
 
 function fmtThroughput(v?: number): string {
   const n = v ?? 0;
   return bpsUnit.value === "bits" ? fmtBps(n * 8) : fmtBytesPerSec(n);
-}
-
-async function fetchInterfaces() {
-  const data = (await invoke("get_network_interfaces")) as NetworkInterface[];
-  ifaces.value = data;
 }
 
 function pushHistorySample() {
@@ -52,31 +42,13 @@ function pushHistorySample() {
   }
 }
 
-let unlistenStats: UnlistenFn | null = null;
-let debouncing = false;
-
-async function onStatsUpdated() {
-  if (debouncing) return;
-  debouncing = true;
-  setTimeout(async () => {
-    refreshUnitPref();
-    await fetchInterfaces();
-    pushHistorySample();
-    debouncing = false;
-  }, 500);
-}
-
 onMounted(async () => {
-  refreshUnitPref();
-  await fetchInterfaces();
+  await ensureInterfacesState();
   pushHistorySample();
-  unlistenStats = await listen("stats_updated", onStatsUpdated);
-  window.addEventListener("storage", refreshUnitPref);
 });
 
-onBeforeUnmount(() => {
-  unlistenStats?.();
-  window.removeEventListener("storage", refreshUnitPref);
+watch(ifaces, () => {
+  pushHistorySample();
 });
 
 const interfaceOptions = computed(() => {

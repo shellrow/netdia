@@ -1,7 +1,6 @@
 use anyhow::{bail, Result};
 use futures::stream::{self, StreamExt};
 use probe::{PortProbe, PortProbeResult, ProbeContext, ServiceProbe};
-use regex::{Regex, RegexBuilder};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::{
@@ -77,7 +76,7 @@ impl ServiceDetector {
                 let mut results: Vec<Result<PortProbeResult>> = Vec::new();
                 if let Some(probes) = port_probe_db.get(&port) {
                     for probe in probes {
-                        let probe_payload = match service_probe_db.get(&probe) {
+                        let probe_payload = match service_probe_db.get(probe) {
                             Some(payload) => payload,
                             None => {
                                 results
@@ -108,6 +107,20 @@ impl ServiceDetector {
                             | ServiceProbe::TcpHTTPSGet
                             | ServiceProbe::TcpHTTPOptions => {
                                 probe::http::HttpProbe::run(ctx).await
+                            }
+                            ServiceProbe::TcpImapCapability
+                            | ServiceProbe::TcpMssqlPrelogin
+                            | ServiceProbe::TcpMemcachedVersion
+                            | ServiceProbe::TcpMqttConnect
+                            | ServiceProbe::TcpMySqlHandshake
+                            | ServiceProbe::TcpOracleTns
+                            | ServiceProbe::TcpPop3Capa
+                            | ServiceProbe::TcpPostgresSslReq
+                            | ServiceProbe::TcpRedisPing
+                            | ServiceProbe::TcpRdpNegotiation
+                            | ServiceProbe::TcpSmbNegotiation
+                            | ServiceProbe::TcpSmtpEhlo => {
+                                probe::special::SpecialTcpProbe::run(ctx).await
                             }
                             ServiceProbe::TcpTlsSession => probe::tls::TlsProbe::run(ctx).await,
                             ServiceProbe::TcpGenericLines | ServiceProbe::TcpHelp => {
@@ -239,40 +252,4 @@ where
         bail!("no response within time limits");
     }
     Ok(out)
-}
-
-// Build a regex with given pattern and flags
-fn build_regex(pat: &str, flags: &str) -> anyhow::Result<Regex> {
-    let mut b = RegexBuilder::new(pat);
-    b.case_insensitive(flags.contains('i'))
-        .dot_matches_new_line(flags.contains('s'));
-    //b.multi_line(true);
-    Ok(b.build()?)
-}
-
-/// Build a regex for HTTP headers (multi-line, case-insensitive, dot matches new line)
-fn build_http_regex(pat: &str) -> anyhow::Result<Regex> {
-    Ok(RegexBuilder::new(pat)
-        .multi_line(true)
-        .case_insensitive(true)
-        .dot_matches_new_line(true)
-        .build()?)
-}
-
-/// Expand CPE templates with regex capture groups
-fn expand_cpe_templates(cpe_list: &[String], caps: &regex::Captures) -> Vec<String> {
-    let mut out = Vec::with_capacity(cpe_list.len());
-    for t in cpe_list {
-        let mut s = t.clone();
-        // Replace $1, $2, ... $99 with corresponding capture groups
-        for i in (1..=99).rev() {
-            let needle = format!("${}", i);
-            if s.contains(&needle) {
-                let repl = caps.get(i).map(|m| m.as_str()).unwrap_or("");
-                s = s.replace(&needle, repl);
-            }
-        }
-        out.push(s);
-    }
-    out
 }

@@ -408,6 +408,141 @@
       ]
     },
     {
+      "id": "tcp:smtp_ehlo",
+      "protocol": "tcp",
+      "name": "SmtpEhlo",
+      "payload": "EHLO netdia.local\r\n",
+      "payload_encoding": "raw",
+      "wait_ms": null,
+      "ports": [
+        25,
+        587
+      ]
+    },
+    {
+      "id": "tcp:pop3_capa",
+      "protocol": "tcp",
+      "name": "Pop3Capa",
+      "payload": "CAPA\r\n",
+      "payload_encoding": "raw",
+      "wait_ms": null,
+      "ports": [
+        110
+      ]
+    },
+    {
+      "id": "tcp:imap_capability",
+      "protocol": "tcp",
+      "name": "ImapCapability",
+      "payload": "a1 CAPABILITY\r\n",
+      "payload_encoding": "raw",
+      "wait_ms": null,
+      "ports": [
+        143
+      ]
+    },
+    {
+      "id": "tcp:mssql_prelogin",
+      "protocol": "tcp",
+      "name": "MssqlPrelogin",
+      "payload": "EgEALwAAAQAAABoABgEAIAABAgAhAAEDACIABAQAJgAB/wAAAAAAAAMAAAAAAAA=",
+      "payload_encoding": "base64",
+      "wait_ms": null,
+      "ports": [
+        1433
+      ]
+    },
+    {
+      "id": "tcp:rdp_negotiation",
+      "protocol": "tcp",
+      "name": "RdpNegotiation",
+      "payload": "AwAAEw7gAAAAAAABAAgAAwAAAA==",
+      "payload_encoding": "base64",
+      "wait_ms": null,
+      "ports": [
+        3389
+      ]
+    },
+    {
+      "id": "tcp:redis_ping",
+      "protocol": "tcp",
+      "name": "RedisPing",
+      "payload": "*1\r\n$4\r\nPING\r\n",
+      "payload_encoding": "raw",
+      "wait_ms": null,
+      "ports": [
+        6379
+      ]
+    },
+    {
+      "id": "tcp:memcached_version",
+      "protocol": "tcp",
+      "name": "MemcachedVersion",
+      "payload": "version\r\n",
+      "payload_encoding": "raw",
+      "wait_ms": null,
+      "ports": [
+        11211
+      ]
+    },
+    {
+      "id": "tcp:postgres_sslreq",
+      "protocol": "tcp",
+      "name": "PostgresSslReq",
+      "payload": "AAAACATSFi8=",
+      "payload_encoding": "base64",
+      "wait_ms": null,
+      "ports": [
+        5432
+      ]
+    },
+    {
+      "id": "tcp:mysql_handshake",
+      "protocol": "tcp",
+      "name": "MysqlHandshake",
+      "payload": "",
+      "payload_encoding": "raw",
+      "wait_ms": null,
+      "ports": [
+        3306
+      ]
+    },
+    {
+      "id": "tcp:mqtt_connect",
+      "protocol": "tcp",
+      "name": "MqttConnect",
+      "payload": "EAwABE1RVFQEAgA8AAA=",
+      "payload_encoding": "base64",
+      "wait_ms": null,
+      "ports": [
+        1883
+      ]
+    },
+    {
+      "id": "tcp:smb_negotiation",
+      "protocol": "tcp",
+      "name": "SmbNegotiation",
+      "payload": "AAAAVP5TTUJAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACQABQABAAAAfwAAAJ/jUbNEx0FKn0+dhMpyAAAAAAICEAIiAiQCAAMCAxADEQM=",
+      "payload_encoding": "base64",
+      "wait_ms": null,
+      "ports": [
+        445
+      ]
+    },
+    {
+      "id": "tcp:oracle_tns",
+      "protocol": "tcp",
+      "name": "OracleTns",
+      "payload": "ADoAAAEAAAABNgEsAAAIAH//fwgAAAEAIAA6AAAAAChERVNDUklQVElPTj0oQ09OTkVDVF9EQVRBPShTRVJWSUNFX05BTUU9WEUpKQ==",
+      "payload_encoding": "base64",
+      "wait_ms": null,
+      "ports": [
+        1521,
+        2483,
+        2484
+      ]
+    },
+    {
       "id": "tcp:tls_session",
       "protocol": "tcp",
       "name": "SSLSessionReq",

@@ -1,10 +1,8 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use crate::probe::service::db;
 use crate::probe::service::db::service::{tcp_service_db, udp_service_db};
 use crate::probe::service::models::ServiceInfo;
 use crate::probe::service::probe::{PortProbeResult, ProbeContext, ServiceProbe};
-use crate::probe::service::{build_regex, expand_cpe_templates};
 use anyhow::Result;
 
 use hickory_proto::{
@@ -67,18 +65,17 @@ async fn run_dns_version_bind_udp(
     for ans in msg.answers() {
         if ans.record_type() == RecordType::TXT
             && ans.name().to_ascii().eq_ignore_ascii_case("version.bind.")
+            && ans.dns_class() == DNSClass::CH
         {
-            if ans.dns_class() == DNSClass::CH {
-                if let hickory_proto::rr::RData::TXT(t) = ans.data() {
-                    let joined = t
-                        .txt_data()
-                        .iter()
-                        .map(|b| String::from_utf8_lossy(b).to_string())
-                        .collect::<Vec<_>>()
-                        .join("");
-                    txt = joined;
-                    break;
-                }
+            if let hickory_proto::rr::RData::TXT(t) = ans.data() {
+                let joined = t
+                    .txt_data()
+                    .iter()
+                    .map(|b| String::from_utf8_lossy(b).to_string())
+                    .collect::<Vec<_>>()
+                    .join("");
+                txt = joined;
+                break;
             }
         }
     }
@@ -121,59 +118,22 @@ async fn run_dns_version_bind_tcp(
     for ans in msg.answers() {
         if ans.record_type() == RecordType::TXT
             && ans.name().to_ascii().eq_ignore_ascii_case("version.bind.")
+            && ans.dns_class() == DNSClass::CH
         {
-            if ans.dns_class() == DNSClass::CH {
-                if let hickory_proto::rr::RData::TXT(t) = ans.data() {
-                    let joined = t
-                        .txt_data()
-                        .iter()
-                        .map(|b| String::from_utf8_lossy(b).to_string())
-                        .collect::<Vec<_>>()
-                        .join("");
-                    if !joined.is_empty() {
-                        return Ok(joined);
-                    }
+            if let hickory_proto::rr::RData::TXT(t) = ans.data() {
+                let joined = t
+                    .txt_data()
+                    .iter()
+                    .map(|b| String::from_utf8_lossy(b).to_string())
+                    .collect::<Vec<_>>()
+                    .join("");
+                if !joined.is_empty() {
+                    return Ok(joined);
                 }
             }
         }
     }
     anyhow::bail!("no TXT answer for version.bind over TCP");
-}
-
-/// Match response text against known service signatures.
-/// (service, cpes)
-fn match_response_signatures(
-    probe_id: &str,
-    text: &str,
-) -> anyhow::Result<Option<(String, Vec<String>)>> {
-    let sigdb = db::service::response_signatures_db();
-    let mut best_service: String = String::new();
-    let mut cpes: Vec<String> = Vec::new();
-    for sig in sigdb {
-        if !sig.probe_id.eq_ignore_ascii_case(probe_id) {
-            continue;
-        }
-
-        let re = match build_regex(&sig.regex, "") {
-            Ok(r) => r,
-            Err(_) => build_regex(&sig.regex, "i")?,
-        };
-        if let Some(caps) = re.captures(text) {
-            if best_service.is_empty() && !sig.service.is_empty() {
-                best_service = sig.service.clone();
-            }
-            let cs = expand_cpe_templates(&sig.cpe, &caps);
-            if !cs.is_empty() {
-                cpes.extend(cs);
-                // Generic CPEs can have multiple candidates, so it's okay to continue collecting
-            }
-        }
-    }
-    if best_service.is_empty() && cpes.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some((best_service, cpes)))
-    }
 }
 
 /// A DNS probe that performs version.bind queries to identify DNS services.
@@ -202,12 +162,6 @@ impl DnsProbe {
                     svc.name = udp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
                     svc.banner = Some(txt.clone());
                     svc.raw = Some(txt.clone());
-                    // Match (using UDP-side)
-                    let hits = match_response_signatures("udp:dns_version_bind_req", &txt)?;
-                    if let Some((best_service, cpes)) = hits {
-                        svc.name = Some(best_service);
-                        svc.cpes = cpes;
-                    }
                     // If truncated, try TCP as well
                     if truncated {
                         if let Ok(txt2) = run_dns_version_bind_tcp(
@@ -219,12 +173,7 @@ impl DnsProbe {
                         .await
                         {
                             svc.raw = Some(txt2.clone());
-                            let hits2 =
-                                match_response_signatures("tcp:dns_version_bind_req", &txt2)?;
-                            if let Some((best_service, cpes)) = hits2 {
-                                svc.name = Some(best_service);
-                                svc.cpes = cpes;
-                            }
+                            svc.banner = Some(txt2);
                         }
                     }
                     let probe_result: PortProbeResult = PortProbeResult {
@@ -254,11 +203,6 @@ impl DnsProbe {
                     {
                         svc.banner = Some(txt.clone());
                         svc.raw = Some(txt.clone());
-                        let hits = match_response_signatures("tcp:dns_version_bind_req", &txt)?;
-                        if let Some((best_service, cpes)) = hits {
-                            svc.name = Some(best_service);
-                            svc.cpes = cpes;
-                        }
                     }
                     let probe_result: PortProbeResult = PortProbeResult {
                         ip: ctx.ip,
@@ -287,11 +231,6 @@ impl DnsProbe {
             svc.name = tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
             svc.banner = Some(txt.clone());
             svc.raw = Some(txt.clone());
-            let hits = match_response_signatures("tcp:dns_version_bind_req", &txt)?;
-            if let Some((best_service, cpes)) = hits {
-                svc.name = Some(best_service);
-                svc.cpes = cpes;
-            }
             let probe_result: PortProbeResult = PortProbeResult {
                 ip: ctx.ip,
                 hostname: ctx.hostname,

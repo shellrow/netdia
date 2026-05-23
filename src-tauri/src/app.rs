@@ -71,7 +71,7 @@ pub fn run() {
             });
 
             if background {
-                let tray_icon_bytes = tray_icon_bytes(theme_is_dark(&app));
+                let tray_icon_bytes = tray_icon_bytes(theme_is_dark(app));
                 let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes)
                     .unwrap_or(app.default_window_icon().unwrap().clone());
 
@@ -198,6 +198,8 @@ pub fn run() {
             command::ping::ping,
             command::ping::cancel_ping,
             command::scan::get_target_ports,
+            command::scan::preview_port_input,
+            command::scan::preview_host_scan_targets,
             command::scan::port_scan,
             command::scan::cancel_portscan,
             command::scan::host_scan,

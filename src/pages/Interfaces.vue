@@ -1,24 +1,19 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
-import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { NetworkInterface } from "../types/net"; 
 import { ipListToString } from "../types/net"; 
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import { DataTableRowSelectEvent } from 'primevue/datatable';
 import { fmtIfType, hexFlags, severityByOper, shortenIpList, fmtBps, fmtBytesPerSec, fmtBytes } from "../utils/formatter";
-import { readBpsUnit, type UnitPref } from "../utils/preferences";
+import { useAppConfig } from "../composables/useAppConfig";
+import { useInterfacesState } from "../composables/useInterfacesState";
 
 const wrapRef = ref<HTMLElement|null>(null);
 const toolbarRef = ref<HTMLElement|null>(null);
 const tableHeight = ref("400px");  
 
-const bpsUnit = ref<UnitPref>(readBpsUnit(localStorage));
-
-function refreshUnitPref() {
-  bpsUnit.value = readBpsUnit(localStorage);
-}
+const { bpsUnit } = useAppConfig();
 
 let ro: ResizeObserver | null = null;
 let rafId: number | null = null;
@@ -61,7 +56,8 @@ function fmtThroughput(v?: number): string {
 }
 
 const loading = ref(false);
-const rows = ref<NetworkInterface[]>([]);
+const { interfaces: rows, ensureInterfacesState, reloadSharedInterfaces } =
+  useInterfacesState();
 
 const selectedIndex = ref<number | null>(null);
 const selectedInterface = computed<NetworkInterface | null>(() => {
@@ -81,48 +77,13 @@ const visibleColumns = ref<string[]>([
   "mac",
 ]);
 
-async function fetchInterfaces() {
-  //loading.value = true;
-  try {
-    const data = (await invoke("get_network_interfaces")) as NetworkInterface[];
-    rows.value = data;
-  } finally {
-    //loading.value = false;
-  }
-}
-
 async function reloadInterfaces() {
   loading.value = true;
   try {
-    await invoke("reload_interfaces");
-    await fetchInterfaces();
+    await reloadSharedInterfaces();
   } finally {
     loading.value = false;
   }
-}
-
-let debouncing = false;
-let unlistenStats: UnlistenFn | null = null;
-let unlistenIfaces: UnlistenFn | null = null;
-
-async function onStatsUpdated() {
-  if (debouncing) return;
-  debouncing = true;
-  setTimeout(async () => {
-    refreshUnitPref();
-    await fetchInterfaces();
-    debouncing = false;
-  }, 500);
-}
-
-async function onInterfacesUpdated() {
-    loading.value = true;
-    try {
-      refreshUnitPref();
-      await fetchInterfaces();
-    } finally {
-      loading.value = false;
-    }
 }
 
 const onRowSelect = (event: DataTableRowSelectEvent) => {
@@ -137,10 +98,7 @@ const onRowUnselect = (_event: DataTableRowSelectEvent) => {
 };
 
 onMounted(async () => {
-  await fetchInterfaces();
-  refreshUnitPref();
-  unlistenStats = await listen("stats_updated", onStatsUpdated);
-  unlistenIfaces = await listen("interfaces_updated", onInterfacesUpdated);
+  await ensureInterfacesState();
 
   await nextTick();
   tableHeight.value = _calcTableHeight();
@@ -150,17 +108,12 @@ onMounted(async () => {
   if (wrapRef.value) ro.observe(wrapRef.value);
   if (toolbarRef.value) ro.observe(toolbarRef.value);
   window.addEventListener("resize", scheduleRecalc);
-  window.addEventListener("storage", refreshUnitPref);
 });
 
 onBeforeUnmount(() => {
-  unlistenStats?.();
-  unlistenIfaces?.();
-
   ro?.disconnect();
   if (rafId) cancelAnimationFrame(rafId);
   window.removeEventListener("resize", scheduleRecalc);
-  window.removeEventListener("storage", refreshUnitPref);
 });
 
 const filtered = computed(() => {

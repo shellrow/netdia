@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import DataTable from "primevue/datatable";
@@ -13,6 +13,7 @@ import {
   HostScanCancelledPayload,
   HostScanErrorPayload,
   HostScanProgressPayload,
+  HostScanTargetPreview,
 } from "../types/probe";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
 import { fmtMs } from "../utils/formatter";
@@ -48,49 +49,11 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
 
 const MAX_EXPAND = 65536;
 
-// Expand IPv4 CIDR "192.168.1.0/24" to host list (excludes network/broadcast when prefix <= 30)
-function expandIpv4Cidr(cidr: string, max = MAX_EXPAND): string[] {
-  const m = cidr.trim().match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d{1,2})$/);
-  if (!m) return [];
-  const [, a, b, c, d, prefixStr] = m;
-  const prefix = parseInt(prefixStr, 10);
-  if (prefix < 0 || prefix > 32) return [];
-
-  const total = estimateHosts(cidr);
-  if (total === 0 || total > max) return [];
-
-  const ipNum =
-    (parseInt(a, 10) << 24) |
-    (parseInt(b, 10) << 16) |
-    (parseInt(c, 10) << 8) |
-    parseInt(d, 10);
-  const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
-  const net = ipNum & mask;
-  const size = 2 ** (32 - prefix);
-  const start = prefix <= 30 ? 1 : 0;
-  const end = prefix <= 30 ? size - 2 : size - 1;
-
-  const ips: string[] = [];
-  for (let i = start; i <= end; i++) {
-    const val = (net + i) >>> 0;
-    const A = (val >>> 24) & 0xff;
-    const B = (val >>> 16) & 0xff;
-    const C = (val >>> 8) & 0xff;
-    const D = val & 0xff;
-    ips.push(`${A}.${B}.${C}.${D}`);
-  }
-  return ips;
-}
-
-function estimateHosts(cidr: string): number {
-  const m = cidr.trim().match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d{1,2})$/);
-  if (!m) return 0;
-  const prefix = parseInt(m[5], 10);
-  if (prefix < 0 || prefix > 32) return 0;
-  const size = 2 ** (32 - prefix);
-  const usable = prefix <= 30 ? Math.max(0, size - 2) : size;
-  return usable;
-}
+const targetPreview = ref<HostScanTargetPreview>({
+  targets: [],
+  estimated_count: 0,
+  exceeds_limit: false,
+});
 
 function resetResult() {
   progressDone.value = 0;
@@ -103,20 +66,13 @@ function resetResult() {
 }
 
 const targetCount = computed(() =>
-  form.mode === "cidr"
-    ? estimateHosts(form.cidr)
-    : new Set(
-        (form.list || "")
-          .split(/[\s,;]+/)
-          .map((s) => s.trim())
-          .filter(Boolean),
-      ).size,
+  targetPreview.value.estimated_count,
 );
 
 const canStart = computed(
   () =>
     targetCount.value > 0 &&
-    (form.mode !== "cidr" || targetCount.value <= MAX_EXPAND) &&
+    !targetPreview.value.exceeds_limit &&
     !loading.value &&
     !running.value,
 );
@@ -134,27 +90,33 @@ const unreachableCount = computed(() => {
   return report.value.unreachable.length;
 });
 
-function parseTargetsForStart(): string[] {
-  if (form.mode === "cidr") {
-    return expandIpv4Cidr(form.cidr, MAX_EXPAND);
-  }
-  const raw = form.list || "";
-  const tokens = raw
-    .split(/[\s,;]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return Array.from(new Set(tokens));
+async function refreshTargetPreview() {
+  targetPreview.value = await invoke<HostScanTargetPreview>(
+    "preview_host_scan_targets",
+    {
+      mode: form.mode,
+      cidr: form.cidr,
+      list: form.list,
+      maxExpand: MAX_EXPAND,
+    },
+  );
 }
 
 async function startScan() {
   resetResult();
 
-  const targets = parseTargetsForStart();
+  const preview = await invoke<HostScanTargetPreview>("preview_host_scan_targets", {
+    mode: form.mode,
+    cidr: form.cidr,
+    list: form.list,
+    maxExpand: MAX_EXPAND,
+  });
+  targetPreview.value = preview;
+  const targets = preview.targets;
   if (targets.length === 0) {
-    const est = form.mode === "cidr" ? estimateHosts(form.cidr) : 0;
     err.value =
-      est > MAX_EXPAND
-        ? `Target too large (${est} hosts). Please use a narrower CIDR or increase the limit.`
+      preview.exceeds_limit
+        ? `Target too large (${preview.estimated_count} hosts). Please use a narrower CIDR or increase the limit.`
         : "No targets. Add CIDR or IP list.";
     return;
   }
@@ -201,6 +163,7 @@ let unlistenCancelled: UnlistenFn | null = null;
 let unlistenError: UnlistenFn | null = null;
 
 onMounted(async () => {
+  await refreshTargetPreview();
   unlistenStart = await listen<HostScanStartPayload>("hostscan:start", (ev) => {
     const runId = ev?.payload?.run_id;
     if (runId) activeRunId.value = runId;
@@ -269,6 +232,14 @@ onMounted(async () => {
     canceling.value = false;
   });
 });
+
+watch(
+  () => [form.mode, form.cidr, form.list],
+  () => {
+    void refreshTargetPreview();
+  },
+  { immediate: false },
+);
 
 onBeforeUnmount(() => {
   unlistenStart?.();

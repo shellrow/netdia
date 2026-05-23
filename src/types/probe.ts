@@ -10,7 +10,7 @@ export interface ProbeStatus {
 
 export interface PingSample {
   seq: number;
-  ip_addr: string;         
+  ip_addr: string;
   hostname?: string | null;
   port?: number | null;
   rtt_ms?: number | null;
@@ -33,7 +33,7 @@ export interface PingStat {
 
 export interface PingSetting {
   hostname?: string | null;
-  ip_addr: string;         
+  ip_addr: string;
   port?: number | null;
   hop_limit: number;
   protocol: PingProtocol;
@@ -43,7 +43,13 @@ export interface PingSetting {
 }
 
 export type PortScanProtocol = "Tcp" | "Quic";
-export type TargetPortsPreset = "Common" | "WellKnown" | "Full" | "Top1000" | "Custom";
+export type TargetPortsPreset =
+  | "Common"
+  | "Top100"
+  | "WellKnown"
+  | "Full"
+  | "Top1000"
+  | "Custom";
 
 export type PortState = "Open" | "Closed" | "Filtered";
 
@@ -69,7 +75,6 @@ export interface ServiceInfo {
   quic_version?: string | null;
   banner?: string | null;
   raw?: string | null;
-  cpes: string[];
   tls_info?: TlsInfo | null;
 }
 
@@ -109,6 +114,11 @@ export interface PortScanSetting {
   timeout_ms: number;
   ordered: boolean;
   service_detection: boolean;
+}
+
+export interface PortInputPreview {
+  user_ports: number[];
+  target_ports: number[];
 }
 
 export type HostState = "Alive" | "Unreachable";
@@ -157,6 +167,12 @@ export interface HostScanRequest {
   payload?: string | null;
   ordered: boolean;
   concurrency?: number | null;
+}
+
+export interface HostScanTargetPreview {
+  targets: string[];
+  estimated_count: number;
+  exceeds_limit: boolean;
 }
 
 export interface NeighborScanStartPayload {

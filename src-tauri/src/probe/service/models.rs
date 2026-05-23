@@ -9,7 +9,6 @@ pub struct ServiceInfo {
     pub quic_version: Option<String>,
     pub banner: Option<String>,
     pub raw: Option<String>,
-    pub cpes: Vec<String>,
     pub tls_info: Option<TlsInfo>,
 }
 

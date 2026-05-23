@@ -16,10 +16,25 @@ pub enum PortScanProtocol {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum TargetPortsPreset {
     Common,
+    Top100,
     WellKnown,
     Full,
     Top1000,
     Custom,
+}
+
+impl TargetPortsPreset {
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "Custom" => TargetPortsPreset::Custom,
+            "Common" => TargetPortsPreset::Common,
+            "Top100" => TargetPortsPreset::Top100,
+            "WellKnown" => TargetPortsPreset::WellKnown,
+            "Top1000" => TargetPortsPreset::Top1000,
+            "Full" => TargetPortsPreset::Full,
+            _ => TargetPortsPreset::Common,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -88,6 +103,12 @@ pub struct PortScanSetting {
     pub service_detection: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PortInputPreview {
+    pub user_ports: Vec<u16>,
+    pub target_ports: Vec<u16>,
+}
+
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum HostState {
     Alive,
@@ -143,16 +164,13 @@ impl HostScanSetting {
         let mut targets: Vec<MaybeHost> = Vec::new();
         if let Some(gw) = &iface.gateway {
             if let Some(ipv4) = gw.ipv4.first() {
-                match netdev::ipnet::Ipv4Net::new(*ipv4, 24) {
-                    Ok(ipv4net) => {
-                        for ipv4 in ipv4net.hosts() {
-                            targets.push(MaybeHost {
-                                ip: Some(IpAddr::V4(ipv4)),
-                                hostname: None,
-                            });
-                        }
+                if let Ok(ipv4net) = netdev::ipnet::Ipv4Net::new(*ipv4, 24) {
+                    for ipv4 in ipv4net.hosts() {
+                        targets.push(MaybeHost {
+                            ip: Some(IpAddr::V4(ipv4)),
+                            hostname: None,
+                        });
                     }
-                    Err(_) => {}
                 }
             }
         }
@@ -203,6 +221,13 @@ pub struct HostScanRequest {
     pub payload: Option<String>,
     pub ordered: bool,
     pub concurrency: Option<usize>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HostScanTargetPreview {
+    pub targets: Vec<String>,
+    pub estimated_count: usize,
+    pub exceeds_limit: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

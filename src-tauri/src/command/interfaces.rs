@@ -59,7 +59,7 @@ pub async fn get_network_interfaces(
             oper_state: iface.oper_state,
             transmit_speed: iface.transmit_speed,
             receive_speed: iface.receive_speed,
-            stats: stats,
+            stats,
             gateway: iface.gateway.clone(),
             dns_servers: iface.dns_servers.clone(),
             mtu: iface.mtu,

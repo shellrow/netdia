@@ -249,6 +249,9 @@ pub async fn port_scan(
                     .iter()
                     .find(|r| r.port == sample.port)
                 {
+                    if let Some(name) = &res.service_info.name {
+                        sample.service_name = Some(name.clone());
+                    }
                     sample.service_info = Some(res.service_info.clone());
                 }
             }

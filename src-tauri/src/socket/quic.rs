@@ -5,7 +5,7 @@ use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 /// Create a QUIC client configuration with optional certificate verification skipping and ALPN protocols.
-pub fn quic_client_config(skip_verify: bool, alpn: &Vec<Vec<u8>>) -> Result<ClientConfig> {
+pub fn quic_client_config(skip_verify: bool, alpn: &[Vec<u8>]) -> Result<ClientConfig> {
     let mut roots = RootCertStore::empty();
     for cert in rustls_native_certs::load_native_certs()? {
         let _ = roots.add(cert);

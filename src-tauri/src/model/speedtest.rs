@@ -7,7 +7,14 @@ pub enum SpeedtestDirection {
     Upload,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SpeedtestType {
+    ByteStream,
+    FileDownload,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SpeedtestResult {
     Full,
@@ -19,6 +26,7 @@ pub enum SpeedtestResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpeedtestSetting {
     pub direction: SpeedtestDirection,
+    pub test_type: SpeedtestType,
     pub target_bytes: u64,
     /// default 30_000
     pub max_duration_ms: Option<u64>,

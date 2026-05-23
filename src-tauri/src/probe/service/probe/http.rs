@@ -10,11 +10,9 @@ use tokio_rustls::{
 };
 
 use super::tls::SkipServerVerification;
-use crate::probe::service::db;
 use crate::probe::service::payload::{PayloadBuilder, PayloadContext};
 use crate::probe::service::probe::{PortProbeResult, ProbeContext};
 use crate::probe::service::read_timeout;
-use crate::probe::service::{build_http_regex, expand_cpe_templates};
 use crate::probe::service::{
     db::service::tcp_service_db, models::ServiceInfo, probe::ServiceProbe,
 };
@@ -92,41 +90,6 @@ fn parse_http_response(bytes: &[u8], body_limit: usize) -> HttpResponseLite {
     res
 }
 
-/// Match HTTP response against known service signatures.
-/// Returns matched CPEs if any.
-fn match_http_signatures(
-    service_keys: &[&str],
-    _probe_id: &str,
-    http_res: &HttpResponseLite,
-) -> anyhow::Result<Vec<String>> {
-    let sigdb = db::service::response_signatures_db();
-    let mut hits = Vec::new();
-
-    'outer: for sig in sigdb {
-        if !service_keys
-            .iter()
-            .any(|k| sig.service.eq_ignore_ascii_case(k))
-        {
-            continue;
-        }
-
-        /* if !sig.probe_id.is_empty() && !sig.probe_id.eq_ignore_ascii_case(probe_id) {
-            continue;
-        } */
-
-        let re = build_http_regex(&sig.regex)?;
-
-        if let Some(caps) = re.captures(&http_res.header_text) {
-            let cpes = expand_cpe_templates(&sig.cpe, &caps);
-            if !cpes.is_empty() {
-                hits.extend(cpes);
-                break 'outer;
-            }
-        }
-    }
-    Ok(hits)
-}
-
 /// An HTTP probe that can send HTTP/HTTPS requests and analyze responses.
 pub struct HttpProbe;
 
@@ -158,11 +121,13 @@ impl HttpProbe {
                     ctx.probe.port,
                     http_res.header_text
                 );
-                let mut svc = ServiceInfo::default();
-                svc.name = tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
-                svc.banner = http_res.status_line.clone();
-                svc.product = http_res.headers.get("server").cloned();
-                svc.raw = Some(http_res.raw_text.clone());
+                let svc = ServiceInfo {
+                    name: tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string()),
+                    banner: http_res.status_line.clone(),
+                    product: http_res.headers.get("server").cloned(),
+                    raw: Some(http_res.raw_text.clone()),
+                    ..Default::default()
+                };
 
                 tracing::debug!(
                     "HTTP Probe: {}:{} - Banner: {:?}, Server {:?}",
@@ -171,12 +136,6 @@ impl HttpProbe {
                     svc.banner,
                     svc.product
                 );
-
-                // Match signatures
-                let cpes = match_http_signatures(&["http"], "tcp:http_get", &http_res)?;
-                if !cpes.is_empty() {
-                    svc.cpes = cpes;
-                }
                 let probe_result: PortProbeResult = PortProbeResult {
                     ip: ctx.ip,
                     hostname: ctx.hostname,
@@ -196,7 +155,7 @@ impl HttpProbe {
                 );
                 let payload_ctx = PayloadContext {
                     hostname: ctx.hostname.as_deref(),
-                    path: Some("/".into()),
+                    path: Some("/"),
                 };
                 let payload: Vec<u8> = payload_builder.payload(payload_ctx)?;
 
@@ -231,10 +190,11 @@ impl HttpProbe {
                 // server connection
                 let conn = tls_stream.get_ref().1;
 
-                let mut svc = ServiceInfo::default();
-                svc.name = tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
-
-                svc.tls_info = super::tls::extract_tls_info(&ctx, &conn);
+                let mut svc = ServiceInfo {
+                    name: tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string()),
+                    tls_info: super::tls::extract_tls_info(&ctx, conn),
+                    ..Default::default()
+                };
 
                 tls_stream.write_all(&payload).await?;
                 tls_stream.flush().await?;
@@ -260,12 +220,6 @@ impl HttpProbe {
                     svc.product
                 );
                 tracing::debug!("RAW: {:?}", svc.raw);
-
-                // Match signatures
-                let cpes = match_http_signatures(&["http"], "tcp:https_get", &http_res)?;
-                if !cpes.is_empty() {
-                    svc.cpes = cpes;
-                }
                 let probe_result: PortProbeResult = PortProbeResult {
                     ip: ctx.ip,
                     hostname: ctx.hostname,
@@ -296,11 +250,13 @@ impl HttpProbe {
                     ctx.probe.port,
                     http_res.header_text
                 );
-                let mut svc = ServiceInfo::default();
-                svc.name = tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
-                svc.banner = http_res.status_line.clone();
-                svc.product = http_res.headers.get("server").cloned();
-                svc.raw = Some(http_res.raw_text.clone());
+                let svc = ServiceInfo {
+                    name: tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string()),
+                    banner: http_res.status_line.clone(),
+                    product: http_res.headers.get("server").cloned(),
+                    raw: Some(http_res.raw_text.clone()),
+                    ..Default::default()
+                };
 
                 tracing::debug!(
                     "HTTP Probe: {}:{} - Banner: {:?}, Server {:?}",
@@ -309,12 +265,6 @@ impl HttpProbe {
                     svc.banner,
                     svc.product
                 );
-
-                // Match signatures
-                let cpes = match_http_signatures(&["http"], "tcp:http_options", &http_res)?;
-                if !cpes.is_empty() {
-                    svc.cpes = cpes;
-                }
                 let probe_result: PortProbeResult = PortProbeResult {
                     ip: ctx.ip,
                     hostname: ctx.hostname,

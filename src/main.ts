@@ -1,14 +1,12 @@
 import { createApp } from "vue";
 import App from "./App.vue";
-import { invoke } from "@tauri-apps/api/core";
 import router from './router';
 import PrimeVue from 'primevue/config';
 import Aura from '@primeuix/themes/aura';
 import { definePreset } from '@primeuix/themes';
 import './style.css';
 import 'primeicons/primeicons.css';
-import type { AppConfig } from "./types/config";
-import { STORAGE_KEYS } from "./constants/storage";
+import { loadAppConfig } from "./composables/useAppConfig";
 
 // Components
 import StyleClass from 'primevue/styleclass';
@@ -72,62 +70,51 @@ const ThemePreset = definePreset(Aura, {
     }
 });
 
-async function initConfigFromTauri() {
+async function bootstrap() {
   try {
-    const cfg: AppConfig = await invoke("get_config");
-    if (cfg) {
-      localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(cfg));
-      localStorage.setItem(STORAGE_KEYS.THEME, cfg.theme);
-      localStorage.setItem(STORAGE_KEYS.REFRESH_INTERVAL_MS, String(cfg.refresh_interval_ms));
-      localStorage.setItem(STORAGE_KEYS.BPS_UNIT, cfg.data_unit);
-      localStorage.setItem(STORAGE_KEYS.AUTOSTART, cfg.startup ? "1" : "0");
-      localStorage.setItem(STORAGE_KEYS.AUTO_INTERNET_CHECK, cfg.auto_internet_check ? "1" : "0");
-      localStorage.setItem(STORAGE_KEYS.AUTO_INTERNET_CHECK_INTERVAL_S, String(cfg.auto_internet_check_interval_s));
-    }
+    await loadAppConfig();
   } catch (e) {
     console.error("Failed to load config from Tauri:", e);
   }
+
+  const app = createApp(App);
+  app.use(router);
+  app.use(PrimeVue, {
+      theme: {
+          preset: ThemePreset,
+          options: {
+              darkModeSelector: '.app-dark',
+          }
+      }
+  });
+
+  app.component('Button', Button);
+  app.component('InputText', InputText);
+  app.component('InputNumber', InputNumber);
+  app.component('InputGroup', InputGroup);
+  app.component('InputGroupAddon', InputGroupAddon);
+  app.component('Tag', Tag);
+  app.component('Badge', Badge);
+  app.component('OverlayBadge', OverlayBadge);
+  app.component('Divider', Divider);
+  app.component('MultiSelect', MultiSelect);
+  app.component('ScrollPanel', ScrollPanel);
+  app.component('Dialog', Dialog);
+  app.component('Chip', Chip);
+  app.component('Select', Select);
+  app.component('Card', Card);
+  app.component('RadioButton', RadioButton);
+  app.component('RadioButtonGroup', RadioButtonGroup);
+  app.component('ToggleSwitch', ToggleSwitch);
+  app.component('ProgressBar', ProgressBar);
+  app.component('Checkbox', Checkbox);
+  app.component('CheckboxGroup', CheckboxGroup);
+  app.component('SelectButton', SelectButton);
+
+  app.directive('tooltip', Tooltip);
+  app.directive('styleclass', StyleClass);
+
+  app.mount('#app');
 }
 
-;(async () => {
-  await initConfigFromTauri()
-})();
-
-const app = createApp(App);
-app.use(router);
-app.use(PrimeVue, {
-    theme: {
-        preset: ThemePreset,
-        options: {
-            darkModeSelector: '.app-dark',
-        }
-    }
-});
-
-app.component('Button', Button);
-app.component('InputText', InputText);
-app.component('InputNumber', InputNumber);
-app.component('InputGroup', InputGroup);
-app.component('InputGroupAddon', InputGroupAddon);
-app.component('Tag', Tag);
-app.component('Badge', Badge);
-app.component('OverlayBadge', OverlayBadge);
-app.component('Divider', Divider);
-app.component('MultiSelect', MultiSelect);
-app.component('ScrollPanel', ScrollPanel);
-app.component('Dialog', Dialog);
-app.component('Chip', Chip);
-app.component('Select', Select);
-app.component('Card', Card);
-app.component('RadioButton', RadioButton);
-app.component('RadioButtonGroup', RadioButtonGroup);
-app.component('ToggleSwitch', ToggleSwitch);
-app.component('ProgressBar', ProgressBar);
-app.component('Checkbox', Checkbox);
-app.component('CheckboxGroup', CheckboxGroup);
-app.component('SelectButton', SelectButton);
-
-app.directive('tooltip', Tooltip);
-app.directive('styleclass', StyleClass);
-
-app.mount('#app');
+void bootstrap();

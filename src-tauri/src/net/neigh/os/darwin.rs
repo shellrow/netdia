@@ -165,7 +165,7 @@ fn ip_from_sockaddr(sa: &sockaddr) -> Option<IpAddr> {
         match sa.sa_family as c_int {
             AF_INET => {
                 let sin = &*(sa as *const _ as *const libc::sockaddr_in);
-                let n = u32::from_be(sin.sin_addr.s_addr as u32);
+                let n = u32::from_be(sin.sin_addr.s_addr);
                 Some(IpAddr::V4(Ipv4Addr::from(n)))
             }
             AF_INET6 => {
@@ -177,7 +177,7 @@ fn ip_from_sockaddr(sa: &sockaddr) -> Option<IpAddr> {
                     return None;
                 }
                 // `s6_addr` is raw big-endian bytes; `Ipv6Addr::from([u8;16])` expects octets.
-                let addr_bytes = (*sin6).sin6_addr.s6_addr;
+                let addr_bytes = sin6.sin6_addr.s6_addr;
                 Some(IpAddr::V6(Ipv6Addr::from(addr_bytes)))
             }
             _ => None,

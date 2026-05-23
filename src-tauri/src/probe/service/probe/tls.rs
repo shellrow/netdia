@@ -181,11 +181,12 @@ impl TlsProbe {
         let tls_stream = timeout(ctx.timeout, connector.connect(sni_name, tcp_stream)).await??;
         let conn = tls_stream.get_ref().1; // server connection
 
-        let mut svc = ServiceInfo::default();
         let tcp_svc_db = db::service::tcp_service_db();
-        svc.name = tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string());
-
-        svc.tls_info = extract_tls_info(&ctx, &conn);
+        let svc = ServiceInfo {
+            name: tcp_svc_db.get_name(ctx.probe.port).map(|s| s.to_string()),
+            tls_info: extract_tls_info(&ctx, conn),
+            ..Default::default()
+        };
 
         let probe_result: PortProbeResult = PortProbeResult {
             ip: ctx.ip,
@@ -196,6 +197,6 @@ impl TlsProbe {
             service_info: svc,
         };
         tracing::debug!("TLS Probe Result: {:?}", probe_result);
-        return Ok(probe_result);
+        Ok(probe_result)
     }
 }

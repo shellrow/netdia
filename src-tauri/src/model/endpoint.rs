@@ -92,17 +92,13 @@ impl Default for Host {
 impl Host {
     /// Create a new Host instance.
     pub fn new(ip: IpAddr) -> Self {
-        Self {
-            ip,
-            ..Default::default()
-        }
+        Self { ip, hostname: None }
     }
     /// Create a new Host instance with the specified hostname.
     pub fn with_hostname(ip: IpAddr, hostname: String) -> Self {
         Self {
             ip,
             hostname: Some(hostname),
-            ..Default::default()
         }
     }
 }
