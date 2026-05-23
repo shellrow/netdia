@@ -221,6 +221,10 @@ pub fn run() {
             command::latency::measure_latency,
             command::speedtest::start_speedtest,
             command::speedtest::stop_speedtest,
+            command::notifications::list_notifications,
+            command::notifications::mark_all_notifications_read,
+            command::notifications::dismiss_notification,
+            command::notifications::upsert_update_notification,
             command::updater::check_update,
             command::updater::install_update,
         ])

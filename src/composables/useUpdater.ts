@@ -1,5 +1,7 @@
 import { ref, computed } from "vue";
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { upsertUpdateNotification } from "./useNotifications";
+import type { UpdateInfo } from "../types/update";
 
 export type UpdateState =
   | "idle"
@@ -9,15 +11,6 @@ export type UpdateState =
   | "ready"
   | "error"
   | "store";
-
-export interface UpdateInfo {
-  available: boolean;
-  version?: string;
-  current_version?: string;
-  notes?: string;
-  pub_date?: string;
-  store_url?: string;
-}
 
 export type DownloadEvent =
   | { event: "Started"; data: { content_length: number | null } }
@@ -67,6 +60,10 @@ export function useUpdater() {
       if (res.store_url) state.value = "store";
       else if (res.available) state.value = "available";
       else state.value = "idle";
+
+      if (res.available) {
+        await upsertUpdateNotification(res);
+      }
     } catch (e: any) {
       error.value = e?.toString?.() ?? "Failed to check update";
       state.value = "error";

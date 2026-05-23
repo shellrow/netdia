@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
+import { useRoute } from "vue-router";
 import { getVersion as getAppVersion } from "@tauri-apps/api/app";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { AppConfig } from "../types/config";
@@ -13,6 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 const { themeMode, setSystemTheme, setLightTheme, setDarkTheme } = useTheme();
 const updater = useUpdater();
+const route = useRoute();
 const {
   config: sharedConfig,
   loadAppConfig,
@@ -50,6 +52,7 @@ const refreshMs = ref<number>(1000);
 const bpsUnit = ref<"bytes" | "bits">("bits");
 const autoInternetCheck = ref<boolean>(true);
 const autoInternetCheckIntervalS = ref<number>(INTERNET_CHECK_INTERVAL.DEFAULT);
+const autoUpdateCheck = ref<boolean>(true);
 
 watch(autoInternetCheckIntervalS, (v) => {
   const n = Number(v);
@@ -70,6 +73,7 @@ function applyFromConfig(c: AppConfig) {
 
   autoInternetCheck.value = !!c.auto_internet_check;
   autoInternetCheckIntervalS.value = clampInt(Math.floor(c.auto_internet_check_interval_s ?? INTERNET_CHECK_INTERVAL.DEFAULT), INTERNET_CHECK_INTERVAL.MIN, INTERNET_CHECK_INTERVAL.MAX);
+  autoUpdateCheck.value = !!c.auto_update_check;
   window.setTimeout(() => {
     suspendAutosave = false;
   }, 0);
@@ -98,6 +102,7 @@ async function saveConfig() {
     logging: cfg.value.logging,
     auto_internet_check: autoInternetCheck.value,
     auto_internet_check_interval_s: clampInt(Math.floor(autoInternetCheckIntervalS.value), INTERNET_CHECK_INTERVAL.MIN, INTERNET_CHECK_INTERVAL.MAX),
+    auto_update_check: autoUpdateCheck.value,
   };
   await saveAppConfig(next);
 }
@@ -125,7 +130,7 @@ async function openLogsFolder() {
   }
 }
 
-watch([theme, refreshMs, bpsUnit, autoInternetCheck, autoInternetCheckIntervalS], scheduleSave, { deep: false });
+watch([theme, refreshMs, bpsUnit, autoInternetCheck, autoInternetCheckIntervalS, autoUpdateCheck], scheduleSave, { deep: false });
 
 watch(
   cfg,
@@ -162,6 +167,16 @@ onMounted(async () => {
     // ignore
   }
 });
+
+watch(
+  () => route.query.section,
+  (section) => {
+    if (section === "general" || section === "appearance" || section === "app") {
+      current.value = section;
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <style scoped>
@@ -288,6 +303,21 @@ onMounted(async () => {
 
         <!-- App -->
         <div v-else-if="current === 'app'" class="flex flex-col gap-4">
+          <Card>
+            <template #title>Update checks</template>
+            <template #content>
+              <div class="flex items-center justify-between py-1">
+                <div>
+                  <div class="font-medium">Automatically check for updates on startup</div>
+                  <div class="text-sm text-surface-500">
+                    When enabled, NetDia checks for updates after launch.
+                  </div>
+                </div>
+                <ToggleSwitch v-model="autoUpdateCheck" />
+              </div>
+            </template>
+          </Card>
+
           <Card>
             <template #title>Updates</template>
             <template #content>
