@@ -43,6 +43,14 @@ function fmtThroughput(v?: number): string {
   return bpsUnit.value === "bits" ? fmtBps(n * 8) : fmtBytesPerSec(n);
 }
 
+function formatTrafficTimeLabel(value: Date | number): string {
+  const date = value instanceof Date ? value : new Date(value);
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
 function maskIpLabel(
   v: string | { addr: string; prefix_len: number },
 ): string {
@@ -54,6 +62,8 @@ function maskMac(mac?: string | null): string {
   if (!mac) return "-";
   return pubIpGate(mac);
 }
+
+const ipv6Expanded = ref(false);
 
 const defaultIface = computed<NetworkInterface | null>(() => {
   const d = ifaces.value.find((i) => i.default) ?? null;
@@ -179,7 +189,7 @@ function initTrafficChart() {
   const now = Date.now();
   // Generate last 30 seconds labels as initial labels
   const labels = Array.from({ length: 30 }, (_, i) =>
-    new Date(now - (29 - i) * 1000).toLocaleTimeString()
+    formatTrafficTimeLabel(now - (29 - i) * 1000)
   );
   const zeros = Array(30).fill(0);
   trafficData.value = {
@@ -221,7 +231,7 @@ function pushTrafficSample() {
   if (!iface || !iface.stats) return;
 
   const now = new Date();
-  const label = now.toLocaleTimeString();
+  const label = formatTrafficTimeLabel(now);
   const rx = iface.stats.rx_bytes_per_sec || 0;
   const tx = iface.stats.tx_bytes_per_sec || 0;
 
@@ -394,24 +404,6 @@ function internetSubtitle(): string {
   return "Reachable";
 }
 
-function publicAsSummary(): string {
-  if (!ipInfo.value) return "IPv4 / IPv6";
-
-  const v4 = ipInfo.value.ipv4;
-  const v6 = ipInfo.value.ipv6;
-
-  const asName =
-    v4?.as_name ||
-    v6?.as_name ||
-    v4?.asn ||
-    v6?.asn ||
-    null;
-
-  if (!asName) return "IPv4 / IPv6";
-
-  return pubIpGate(asName);
-}
-
 // --- Network Path ---
 type Health = "ok" | "warn" | "bad" | "unknown";
 type PathNodeType = "device" | "iface" | "gateway" | "dns" | "public" | "internet";
@@ -420,7 +412,6 @@ type PathNode = {
   type: PathNodeType;
   title: string;
   subtitle?: string;
-  summary?: string;
   icon: string;
   health: Health;
   color: string;
@@ -456,6 +447,22 @@ const dnsDetail = computed(() => {
   };
 });
 
+const maskedIpv6Labels = computed(() =>
+  (defaultIface.value?.ipv6 ?? []).map((ip) => maskIpLabel(ip)),
+);
+
+const ipv6SummaryLabel = computed(() => {
+  const count = defaultIface.value?.ipv6?.length ?? 0;
+  if (count === 0) return "-";
+  return `${count} address${count === 1 ? "" : "es"}`;
+});
+
+const preferredDnsServer = computed(() => {
+  const servers = defaultIface.value?.dns_servers ?? [];
+  const ipv4 = servers.find((server) => !server.includes(":"));
+  return ipv4 ?? servers[0] ?? null;
+});
+
 const router = useRouter();
 
 function healthColor(h: Health) {
@@ -476,10 +483,10 @@ const pathNodes = computed<PathNode[]>(() => {
     type: "device",
     title: "This Device",
     subtitle: hostnameVisible.value && sys.value?.hostname ? sys.value.hostname : "Hostname hidden",
-    summary: sys.value ? `${sys.value.os_type ?? ""} ${sys.value.architecture ?? ""}`.trim() : "",
     icon: "pi pi-desktop",
     health: sys.value ? "ok" : "unknown",
     color: healthColor(sys.value ? "ok" : "unknown"),
+    onClick: () => router.push({ name: "os" }),
   });
 
   // 2. Default interface
@@ -488,9 +495,6 @@ const pathNodes = computed<PathNode[]>(() => {
     type: "iface",
     title: "Default IF",
     subtitle: iface ? iface.display_name : "Not detected",
-    summary: iface?.ipv4?.[0]
-      ? `IPv4: ${maskIpLabel(iface.ipv4[0])}`
-      : (iface ? "No IPv4" : ""),
     icon: "pi pi-sitemap",
     health: iface ? "ok" : "bad",
     color: healthColor(iface ? "ok" : "bad"),
@@ -505,7 +509,6 @@ const pathNodes = computed<PathNode[]>(() => {
     type: "gateway",
     title: "Gateway",
     subtitle: gwIp ? pubIpGate(gwIp) : "Not found",
-    summary: iface?.gateway?.mac_addr ? `MAC: ${maskMac(iface.gateway.mac_addr)}` : "",
     icon: "pi pi-directions",
     health: gwIp ? "ok" : "warn",
     color: healthColor(gwIp ? "ok" : "warn"),
@@ -517,8 +520,7 @@ const pathNodes = computed<PathNode[]>(() => {
   n.push({
     type: "dns",
     title: "DNS",
-    subtitle: dns.length ? pubIpGate(dns[0]) : "Not set",
-    summary: dns.length > 1 ? `+${dns.length - 1} more` : "",
+    subtitle: preferredDnsServer.value ? pubIpGate(preferredDnsServer.value) : "Not set",
     icon: "pi pi-server",
     health: dns.length ? "ok" : "warn",
     color: healthColor(dns.length ? "ok" : "warn"),
@@ -530,7 +532,6 @@ const pathNodes = computed<PathNode[]>(() => {
     type: "public",
     title: "Public IP",
     subtitle: publicIpSubtitle(),
-    summary: publicAsSummary(),
     icon: "pi pi-globe",
     health: internetHealth(),
     color: healthColor(internetHealth()),
@@ -542,7 +543,6 @@ const pathNodes = computed<PathNode[]>(() => {
     type: "internet",
     title: "Internet",
     subtitle: internetSubtitle(),
-    summary: "",
     icon: "pi pi-wifi",
     health: internetHealth(),
     color: healthColor(internetHealth()),
@@ -576,6 +576,10 @@ onBeforeUnmount(() => {
 watch(ifaces, () => {
   refreshTrafficLabels();
   pushTrafficSample();
+});
+
+watch(() => defaultIface.value?.index ?? null, () => {
+  ipv6Expanded.value = false;
 });
 
 watch(
@@ -622,6 +626,14 @@ watch(
   user-select: none;
   transition: transform 0.08s ease, box-shadow 0.08s ease;
   min-width: 210px;
+}
+
+.nd-node-card :deep(.p-card-body) {
+  padding: 1rem;
+}
+
+.nd-node-card :deep(.p-card-content) {
+  display: none;
 }
 
 .nd-node-card:hover {
@@ -815,11 +827,6 @@ watch(
                           {{ item.subtitle ?? "" }}
                         </div>
                       </template>
-                      <template #content>
-                        <div class="text-xs text-surface-500 line-clamp-2">
-                          {{ item.summary ?? "" }}
-                        </div>
-                      </template>
                     </Card>
                   </template>
                 </Timeline>
@@ -970,17 +977,28 @@ watch(
                     </div>
                     <div>
                       <span class="text-surface-500 text-xs">IPv6</span>
-                      <div class="mt-1 flex flex-wrap gap-2">
-                        <Chip
-                          v-for="(v, i) in defaultIface.ipv6 ?? []"
-                          :key="'v6-' + i"
-                          :label="maskIpLabel(v)"
-                          :class="['font-mono', 'copyable', !publicIpVisible && 'text-surface-500']"
+                      <div class="mt-1 flex flex-col items-start gap-2">
+                        <Button
+                          v-if="(defaultIface.ipv6?.length ?? 0) > 0"
+                          :label="ipv6Expanded ? 'Hide IPv6 addresses' : ipv6SummaryLabel"
+                          text
+                          severity="secondary"
+                          size="small"
+                          class="px-0!"
+                          @click="ipv6Expanded = !ipv6Expanded"
                         />
-                        <span
-                          v-if="(defaultIface.ipv6?.length ?? 0) === 0"
-                          >-</span
+                        <div
+                          v-if="ipv6Expanded"
+                          class="flex flex-wrap gap-2"
                         >
+                          <Chip
+                            v-for="(label, i) in maskedIpv6Labels"
+                            :key="'v6-' + i"
+                            :label="label"
+                            :class="['font-mono', 'copyable', !publicIpVisible && 'text-surface-500']"
+                          />
+                        </div>
+                        <span v-else-if="(defaultIface.ipv6?.length ?? 0) === 0">-</span>
                       </div>
                     </div>
                   </div>
