@@ -261,13 +261,13 @@ onMounted(async () => {
       <div class="flex items-center gap-2">
         <span class="text-surface-500 w-24">Support</span>
         <a
-          href="https://ko-fi.com/shellrow"
+          href="https://donate.stripe.com/3cIbJ046Q0671z6ctHgIo01"
           target="_blank"
           rel="noopener"
           class="text-primary-600 dark:text-primary-400 hover:underline flex items-center gap-1"
         >
           <i class="pi pi-heart text-xs text-red-500"></i>
-          Buy me a coffee on Ko-fi
+          Support via Stripe
         </a>
       </div>
       <div class="pt-2 text-xs text-surface-500">
