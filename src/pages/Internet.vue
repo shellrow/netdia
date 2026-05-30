@@ -82,8 +82,8 @@ const elapsedText = computed(() => fmtDuration(stElapsedMs.value));
 const maxDurationMs = 30_000;
 
 const speedtestTypeOptions: Array<{ label: string; value: SpeedtestType }> = [
-  { label: "File Download", value: "file-download" },
-  { label: "Byte Stream", value: "byte-stream" },
+  { label: "File", value: "file-download" },
+  { label: "Stream", value: "byte-stream" },
 ];
 
 const directionOptions = computed(() => [
