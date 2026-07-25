@@ -9,6 +9,7 @@ use crate::probe::ping;
 
 #[tauri::command]
 pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<(), String> {
+    super::validation::validate_ping(&setting)?;
     let default_interface: Interface = netdev::get_default_interface()
         .map_err(|e| format!("Failed to get default interface: {}", e))?;
     let src_ip = match setting.ip_addr {
@@ -44,6 +45,7 @@ pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<(), String> {
     );
 
     tauri::async_runtime::spawn(async move {
+        let cancellation = token.clone();
         let res = match setting.protocol {
             PingProtocol::Icmp => {
                 ping::icmp::icmp_ping(&app, &run_id, src_ip, setting, token).await
@@ -59,6 +61,9 @@ pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<(), String> {
         };
 
         if let Err(e) = res {
+            if cancellation.is_cancelled() {
+                return;
+            }
             let _ = app.emit(
                 "ping:error",
                 PingErrorPayload {

@@ -37,6 +37,7 @@ pub async fn save_config(
     db: State<'_, DatabaseState>,
     cfg: AppConfig,
 ) -> Result<(), String> {
+    super::validation::validate_config(&cfg)?;
     // Persist to disk + update in-memory
     db.save_app_config(&cfg).await.map_err(|e| e.to_string())?;
     {

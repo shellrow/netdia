@@ -44,6 +44,7 @@ pub async fn init_probe_db() -> Result<(), String> {
 
 #[tauri::command]
 pub async fn port_scan(app: AppHandle, setting: PortScanSetting) -> Result<PortScanReport, String> {
+    super::validation::validate_port_scan(&setting)?;
     let default_interface: Interface = netdev::get_default_interface()
         .map_err(|e| format!("Failed to get default interface: {}", e))?;
     let src_ip = match setting.ip_addr {
@@ -97,6 +98,7 @@ pub async fn cancel_portscan() -> bool {
 
 #[tauri::command]
 pub async fn host_scan(app: AppHandle, setting: HostScanRequest) -> Result<HostScanReport, String> {
+    super::validation::validate_host_scan(&setting)?;
     let scan_setting: HostScanSetting = HostScanSetting::from_request(setting);
     let run_id = uuid::Uuid::new_v4().to_string();
 
@@ -286,5 +288,33 @@ pub async fn preview_host_scan_targets(
                 targets,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_ports_ranges_and_removes_duplicates() {
+        assert_eq!(
+            parse_user_ports("443, 80, 82-80, 443, invalid"),
+            vec![80, 81, 82, 443]
+        );
+    }
+
+    #[test]
+    fn estimates_usable_ipv4_hosts() {
+        assert_eq!(estimate_ipv4_hosts("192.0.2.0/24"), Some(254));
+        assert_eq!(estimate_ipv4_hosts("192.0.2.0/31"), Some(2));
+        assert_eq!(estimate_ipv4_hosts("invalid"), None);
+    }
+
+    #[test]
+    fn parses_and_deduplicates_host_lists() {
+        assert_eq!(
+            parse_target_list("example.com, 192.0.2.1; example.com"),
+            vec!["192.0.2.1".to_string(), "example.com".to_string()]
+        );
     }
 }

@@ -14,6 +14,7 @@ pub async fn start_speedtest(
     state: State<'_, Arc<AppState>>,
     setting: SpeedtestSetting,
 ) -> Result<(), String> {
+    super::validation::validate_speedtest(&setting)?;
     // If a speedtest is already running, abort it
     {
         let mut h = state.speedtest_task.lock().await;

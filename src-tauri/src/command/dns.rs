@@ -11,6 +11,7 @@ use crate::{
 
 #[tauri::command]
 pub async fn lookup_host(host: &str) -> Result<Host, String> {
+    super::validation::validate_host(host, "host")?;
     crate::net::dns::lookup_host(host, std::time::Duration::from_secs(5))
         .await
         .map_err(|e| e.to_string())
@@ -18,12 +19,14 @@ pub async fn lookup_host(host: &str) -> Result<Host, String> {
 
 #[tauri::command]
 pub async fn lookup_domain(hostname: &str) -> Result<Domain, String> {
+    super::validation::validate_host(hostname, "hostname")?;
     let timeout = std::time::Duration::from_secs(5);
     Ok(dns::lookup_domain(hostname, timeout).await)
 }
 
 #[tauri::command]
 pub async fn lookup_ip(hostname: &str) -> Result<Vec<IpAddr>, String> {
+    super::validation::validate_host(hostname, "hostname")?;
     let timeout = std::time::Duration::from_secs(5);
     dns::lookup_ip(hostname, timeout)
         .await
@@ -40,6 +43,7 @@ pub async fn reverse_lookup(ip: IpAddr) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn lookup_all(hostname: &str) -> Result<DomainLookupInfo, String> {
+    super::validation::validate_host(hostname, "hostname")?;
     let resolver =
         DnsResolver::new().map_err(|e| format!("failed to create DNS resolver: {}", e))?;
     resolver

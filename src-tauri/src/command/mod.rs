@@ -13,6 +13,7 @@ pub mod system;
 pub mod trace;
 pub mod ui_preferences;
 pub mod updater;
+mod validation;
 
 use crate::model::AppInfo;
 
