@@ -79,7 +79,9 @@ pub fn run() {
             if background {
                 let tray_icon_bytes = tray_icon_bytes(theme_is_dark(app));
                 let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes)
-                    .unwrap_or(app.default_window_icon().unwrap().clone());
+                    .ok()
+                    .or_else(|| app.default_window_icon().cloned())
+                    .ok_or_else(|| std::io::Error::other("no tray icon is available"))?;
 
                 let show_item = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
                 let hide_item = MenuItem::with_id(app, "hide", "Hide Window", true, None::<&str>)?;
@@ -146,22 +148,19 @@ pub fn run() {
                 // Get the autostart manager
                 let autostart_manager = app.autolaunch();
 
-                if startup {
-                    // Enable autostart
-                    let _ = autostart_manager.enable();
-                    // Check enable state
-                    tracing::debug!(
-                        "registered for autostart? {}",
-                        autostart_manager.is_enabled().unwrap()
-                    );
+                let update_result = if startup {
+                    autostart_manager.enable()
                 } else {
-                    // Disable autostart
-                    let _ = autostart_manager.disable();
-                    // Check enable state
-                    tracing::debug!(
-                        "registered for autostart? {}",
-                        autostart_manager.is_enabled().unwrap()
-                    );
+                    autostart_manager.disable()
+                };
+                if let Err(error) = update_result {
+                    tracing::warn!("failed to update autostart registration: {error}");
+                }
+                match autostart_manager.is_enabled() {
+                    Ok(enabled) => tracing::debug!("registered for autostart? {enabled}"),
+                    Err(error) => {
+                        tracing::warn!("failed to read autostart registration: {error}");
+                    }
                 }
             }
 
@@ -175,9 +174,14 @@ pub fn run() {
                     return;
                 };
                 let tray_icon_bytes = tray_icon_bytes(matches!(theme, tauri::Theme::Dark));
-                let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes)
-                    .unwrap_or(app.default_window_icon().unwrap().clone());
-                let _ = tray.set_icon(Some(tray_icon));
+                if let Some(tray_icon) = tauri::image::Image::from_bytes(tray_icon_bytes)
+                    .ok()
+                    .or_else(|| app.default_window_icon().cloned())
+                {
+                    let _ = tray.set_icon(Some(tray_icon));
+                } else {
+                    tracing::warn!("unable to update tray icon because no icon is available");
+                }
             }
         })
         // Register commands

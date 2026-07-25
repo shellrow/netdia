@@ -107,7 +107,7 @@ pub struct UiPreferences {
 impl Default for UiPreferences {
     fn default() -> Self {
         Self {
-            sidebar_compact: true,
+            sidebar_compact: false,
             last_dns_query: "example.com".to_string(),
             public_ip_visible: true,
             hostname_visible: true,

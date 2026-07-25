@@ -82,7 +82,10 @@ pub async fn check_update(
     };
 
     // Store the pending update for later installation
-    *pending.0.lock().unwrap() = update;
+    *pending
+        .0
+        .lock()
+        .map_err(|_| "update state lock was poisoned".to_string())? = update;
 
     Ok(info)
 }
@@ -127,7 +130,12 @@ pub async fn install_update(
     pending: State<'_, PendingUpdate>,
     on_event: Channel<DownloadEvent>,
 ) -> Result<(), String> {
-    let Some(update) = pending.0.lock().unwrap().take() else {
+    let Some(update) = pending
+        .0
+        .lock()
+        .map_err(|_| "update state lock was poisoned".to_string())?
+        .take()
+    else {
         let _ = on_event.send(DownloadEvent::Error {
             message: "No pending update. Call check_update first.".to_string(),
         });

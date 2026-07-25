@@ -9,6 +9,13 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  --nd-canvas: #f7f9fc;
+  --nd-surface: #ffffff;
+  --nd-border: #e2e8f0;
+  --nd-muted: #64748b;
+  --nd-ink: #0f172a;
+  --nd-radius: 0.9rem;
+  --nd-shadow: 0 1px 2px rgba(15, 23, 42, 0.035), 0 10px 28px rgba(15, 23, 42, 0.035);
 }
 
 html,
@@ -18,12 +25,50 @@ body,
 }
 
 body {
-  background: var(--p-surface-50);
+  background: var(--nd-canvas);
   color: var(--p-text-color);
+}
+
+.skip-link {
+  position: fixed;
+  left: 0.75rem;
+  top: 0.75rem;
+  z-index: 10000;
+  transform: translateY(-200%);
+  border-radius: 0.65rem;
+  background: var(--p-primary-600);
+  color: white;
+  padding: 0.6rem 0.85rem;
+  font-weight: 600;
+  transition: transform 120ms ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 
 .app-dark body {
   background: var(--p-surface-950);
+}
+
+.app-dark {
+  --nd-canvas: #080d18;
+  --nd-surface: #111827;
+  --nd-border: #273244;
+  --nd-muted: #94a3b8;
+  --nd-ink: #f8fafc;
+  --nd-shadow: 0 1px 2px rgba(0, 0, 0, 0.22), 0 14px 32px rgba(0, 0, 0, 0.14);
 }
 
 ::selection {
@@ -48,6 +93,84 @@ body {
   justify-content: center;
   flex-shrink: 0;
   border-radius: 0.8rem;
+}
+
+.nd-sidebar {
+  box-shadow: 1px 0 0 rgba(15, 23, 42, 0.015);
+}
+
+.nd-sidebar nav a {
+  min-height: 2.55rem;
+  position: relative;
+}
+
+.nd-sidebar nav a[aria-current="page"]::before {
+  position: absolute;
+  inset-block: 0.58rem;
+  left: -0.5rem;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--p-primary-500);
+  content: "";
+}
+
+.nd-sidebar nav a[aria-current="page"] .nd-nav-icon {
+  color: var(--p-primary-600);
+}
+
+.app-dark .nd-sidebar nav a[aria-current="page"] .nd-nav-icon {
+  color: var(--p-primary-300);
+}
+
+.nd-nav-icon {
+  width: 1.15rem;
+  color: var(--p-surface-500);
+  text-align: center;
+}
+
+.nd-topbar {
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.02);
+}
+
+.nd-status-banner {
+  box-shadow: 0 1px 2px rgba(127, 29, 29, 0.04);
+}
+
+.nd-page-toolbar {
+  border: 1px solid var(--nd-border);
+  border-radius: var(--nd-radius);
+  background: color-mix(in srgb, var(--nd-surface) 94%, var(--p-primary-50));
+  padding: 0.7rem 0.8rem;
+}
+
+.nd-empty-state {
+  display: flex;
+  min-height: 13rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed color-mix(in srgb, var(--nd-border) 75%, var(--p-primary-300));
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--nd-surface) 96%, var(--p-primary-50));
+  padding: 2rem;
+  text-align: center;
+}
+
+.nd-empty-icon {
+  display: inline-flex;
+  width: 3rem;
+  height: 3rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.85rem;
+  background: var(--p-primary-50);
+  color: var(--p-primary-600);
+  font-size: 1.2rem;
+}
+
+.app-dark .nd-empty-icon {
+  background: color-mix(in srgb, var(--p-primary-900) 60%, transparent);
+  color: var(--p-primary-300);
 }
 
 :where(
@@ -81,9 +204,9 @@ body {
 
 :where(.p-card) {
   border: 1px solid var(--p-content-border-color);
-  border-radius: 1rem;
+  border-radius: var(--nd-radius);
   overflow: hidden;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--nd-shadow);
 }
 
 .app-dark :where(.p-card) {
@@ -91,8 +214,8 @@ body {
 }
 
 :where(.p-card-body) {
-  gap: 0.95rem;
-  padding: 1rem 1.05rem;
+  gap: 0.85rem;
+  padding: 1rem 1.1rem;
 }
 
 :where(.p-card-title) {
@@ -103,8 +226,15 @@ body {
 
 :where(.p-datatable) {
   border: 1px solid var(--p-content-border-color);
-  border-radius: 1rem;
+  border-radius: var(--nd-radius);
   overflow: hidden;
+}
+
+@media (max-width: 1023px) {
+  .nd-sidebar {
+    width: min(18rem, 86vw) !important;
+    box-shadow: 12px 0 36px rgba(15, 23, 42, 0.2);
+  }
 }
 
 :where(.p-datatable-table) {
