@@ -8,6 +8,7 @@ const loading = ref(false);
 const ready = ref(false);
 const statsRevision = ref(0);
 const interfacesRevision = ref(0);
+const error = ref<string | null>(null);
 
 let startPromise: Promise<void> | null = null;
 let debouncing = false;
@@ -19,6 +20,10 @@ async function fetchInterfaces(withLoading = false) {
   try {
     const data = await invoke<NetworkInterface[]>("get_network_interfaces");
     interfaces.value = data ?? [];
+    error.value = null;
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause);
+    throw cause;
   } finally {
     if (withLoading) {
       loading.value = false;
@@ -30,9 +35,14 @@ async function handleStatsUpdated() {
   if (debouncing) return;
   debouncing = true;
   window.setTimeout(async () => {
-    await fetchInterfaces(false);
-    statsRevision.value += 1;
-    debouncing = false;
+    try {
+      await fetchInterfaces(false);
+      statsRevision.value += 1;
+    } catch {
+      // Keep the shared error state and allow the next event to retry.
+    } finally {
+      debouncing = false;
+    }
   }, 500);
 }
 
@@ -82,6 +92,7 @@ export function useInterfacesState() {
     ready,
     statsRevision,
     interfacesRevision,
+    error,
     ensureInterfacesState,
     reloadSharedInterfaces,
   };
