@@ -17,7 +17,10 @@ fn ops() -> &'static Mutex<OperationMap> {
 }
 
 pub fn start_op(key: &str) -> CancellationToken {
-    let mut map = ops().lock().unwrap();
+    let mut map = ops().lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("operation registry lock was poisoned; recovering");
+        poisoned.into_inner()
+    });
 
     if let Some(old) = map.remove(key) {
         old.cancel();
@@ -29,7 +32,10 @@ pub fn start_op(key: &str) -> CancellationToken {
 }
 
 pub fn cancel_op(key: &str) -> bool {
-    let mut map = ops().lock().unwrap();
+    let mut map = ops().lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("operation registry lock was poisoned; recovering");
+        poisoned.into_inner()
+    });
     if let Some(token) = map.remove(key) {
         token.cancel();
         true

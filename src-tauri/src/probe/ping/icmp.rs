@@ -65,7 +65,7 @@ pub async fn icmp_ping(
 
     let target = SocketAddr::new(setting.ip_addr, 0);
 
-    let echo_id: u16 = 0x1234;
+    let echo_id = fastrand::u16(1..=u16::MAX);
     let payload = b"netd";
 
     let mut samples = Vec::with_capacity(setting.count as usize);
@@ -83,7 +83,7 @@ pub async fn icmp_ping(
             );
             return Err(anyhow::anyhow!("cancelled"));
         }
-        let pkt = build_icmp_echo_bytes(src_ip, setting.ip_addr, echo_id, seq as u16, payload);
+        let pkt = build_icmp_echo_bytes(src_ip, setting.ip_addr, echo_id, seq as u16, payload)?;
 
         let sent_at = Instant::now();
         let mut status = ProbeStatus::new();

@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import { getVersion as getAppVersion } from "@tauri-apps/api/app";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { AppConfig } from "../types/config";
 import { useTheme } from "../composables/useTheme";
 import { INTERNET_CHECK_INTERVAL } from "../constants/defaults";
@@ -152,10 +152,10 @@ const pubDateText = computed(() => {
   return s.split("T")[0] ?? s;
 });
 
-function openStore() {
+async function openStore() {
   const url = updater.info.value?.store_url;
   if (url) {
-    openPath(url);
+    await openUrl(url);
   }
 }
 
@@ -220,7 +220,7 @@ watch(
                   <div class="text-sm text-surface-500">Adjust to balance performance and responsiveness.</div>
                 </div>
                 <div class="flex items-center gap-2">
-                  <InputNumber v-model="refreshMs" :min="1000" :max="10000" :step="100" showButtons inputClass="w-28" />
+                  <InputNumber v-model="refreshMs" :min="1000" :max="10000" :step="100" showButtons inputClass="w-28" aria-label="Refresh interval in milliseconds" />
                   <span class="text-sm text-surface-500">ms</span>
                 </div>
               </div>
@@ -256,6 +256,7 @@ watch(
                       showButtons
                       inputClass="w-28"
                       :disabled="!autoInternetCheck"
+                      aria-label="Automatic internet check interval in seconds"
                     />
                     <span class="text-sm text-surface-500">s</span>
                   </div>

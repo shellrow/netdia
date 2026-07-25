@@ -10,23 +10,29 @@ use nex_packet::{
 };
 use std::net::IpAddr;
 
-pub fn build_icmp_echo_bytes(src: IpAddr, dst: IpAddr, id: u16, seq: u16, payload: &[u8]) -> Bytes {
+pub fn build_icmp_echo_bytes(
+    src: IpAddr,
+    dst: IpAddr,
+    id: u16,
+    seq: u16,
+    payload: &[u8],
+) -> anyhow::Result<Bytes> {
     match (src, dst) {
-        (IpAddr::V4(s), IpAddr::V4(d)) => IcmpPacketBuilder::new(s, d)
+        (IpAddr::V4(s), IpAddr::V4(d)) => Ok(IcmpPacketBuilder::new(s, d)
             .icmp_type(IcmpType::EchoRequest)
             .icmp_code(icmp::echo_request::IcmpCodes::NoCode)
             .echo_fields(id, seq)
             .payload(Bytes::copy_from_slice(payload))
             .build()
-            .to_bytes(),
-        (IpAddr::V6(s), IpAddr::V6(d)) => Icmpv6PacketBuilder::new(s, d)
+            .to_bytes()),
+        (IpAddr::V6(s), IpAddr::V6(d)) => Ok(Icmpv6PacketBuilder::new(s, d)
             .icmpv6_type(Icmpv6Type::EchoRequest)
             .icmpv6_code(icmpv6::echo_request::Icmpv6Codes::NoCode)
             .echo_fields(id, seq)
             .payload(Bytes::copy_from_slice(payload))
             .build()
-            .to_bytes(),
-        _ => panic!("Source and destination IP version mismatch"),
+            .to_bytes()),
+        _ => anyhow::bail!("source and destination IP versions do not match"),
     }
 }
 

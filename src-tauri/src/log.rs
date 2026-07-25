@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::fs::File;
 use std::path::Path;
 use tracing::Level;
@@ -15,7 +15,8 @@ pub fn init_logger(config: &crate::config::AppConfig) -> Result<()> {
         // Convert to PathBuf
         Path::new(&file_path).to_path_buf()
     } else {
-        crate::fs::get_user_file_path(DEFAULT_LOG_FILE_NAME).unwrap()
+        crate::fs::get_user_file_path(DEFAULT_LOG_FILE_NAME)
+            .ok_or_else(|| anyhow!("failed to resolve default log file path"))?
     };
     let log_file: File = if log_file_path.exists() {
         File::options().write(true).open(&log_file_path)?
@@ -35,8 +36,7 @@ pub fn init_logger(config: &crate::config::AppConfig) -> Result<()> {
             .with_timer(ChronoLocal::rfc_3339())
             .with_writer(writer)
             .finish();
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("setting default subscriber failed");
+        tracing::subscriber::set_global_default(subscriber)?;
     } else {
         // In release mode, log only to the error log file
         let error_writer = error_log.with_max_level(Level::ERROR);
@@ -47,8 +47,7 @@ pub fn init_logger(config: &crate::config::AppConfig) -> Result<()> {
             .with_timer(ChronoLocal::rfc_3339())
             .with_writer(error_writer)
             .finish();
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("setting default subscriber failed");
+        tracing::subscriber::set_global_default(subscriber)?;
     }
 
     Ok(())

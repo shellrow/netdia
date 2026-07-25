@@ -187,12 +187,12 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
 <template>
   <div
     ref="wrapRef"
-    class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
+    class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
   >
     <!-- Toolbar -->
     <div
       ref="toolbarRef"
-      class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-3"
+      class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-3"
     >
       <div class="flex items-center gap-2 min-w-0">
         <span class="text-surface-500 dark:text-surface-400 text-sm">
@@ -211,6 +211,7 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
           optionValue="value"
           placeholder="Select interfaces"
           class="min-w-48"
+          aria-label="Monitored interfaces"
           :maxSelectedLabels="3"
           size="small"
         />

@@ -14,6 +14,7 @@ import { useRouter } from "vue-router";
 import type { IpInfoDual } from "../types/internet";
 import { useAppConfig } from "../composables/useAppConfig";
 import { useInterfacesState } from "../composables/useInterfacesState";
+import { reportAppError } from "../composables/useAppStatus";
 
 // @ts-ignore -- used in template refs
 const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
@@ -306,8 +307,8 @@ async function fetchSysInfo() {
   try {
     const data = (await invoke("get_sys_info")) as SysInfo;
     sys.value = data;
-  } finally {
-    /* noop */
+  } catch (error) {
+    reportAppError(error, "Failed to load system information");
   }
 }
 
@@ -558,7 +559,13 @@ function onPathNodeClick(node: PathNode) {
 
 onMounted(async () => {
   initTrafficChart();
-  await Promise.all([ensureInterfacesState(), fetchSysInfo()]);
+  const [interfacesResult] = await Promise.allSettled([
+    ensureInterfacesState(),
+    fetchSysInfo(),
+  ]);
+  if (interfacesResult.status === "rejected") {
+    reportAppError(interfacesResult.reason, "Failed to load network interfaces");
+  }
   refreshTrafficLabels();
   pushTrafficSample();
 
@@ -624,21 +631,24 @@ watch(
 .nd-node-card {
   cursor: pointer;
   user-select: none;
-  transition: transform 0.08s ease, box-shadow 0.08s ease;
-  min-width: 210px;
-}
-
-.nd-node-card :deep(.p-card-body) {
-  padding: 1rem;
-}
-
-.nd-node-card :deep(.p-card-content) {
-  display: none;
+  min-width: 155px;
+  border: 0;
+  border-radius: 0.75rem;
+  background: transparent;
+  padding: 0.65rem 0.75rem;
+  color: inherit;
+  text-align: left;
+  transition: background-color 140ms ease, transform 140ms ease;
 }
 
 .nd-node-card:hover {
   transform: translateY(-1px);
-  box-shadow: var(--shadow-3);
+  background: color-mix(in srgb, var(--p-primary-50) 70%, transparent);
+}
+
+.nd-node-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--p-primary-400) 75%, transparent);
+  outline-offset: 2px;
 }
 
 .nd-path-scroll {
@@ -732,18 +742,21 @@ watch(
 <template>
   <div
     ref="wrapRef"
-    class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
+    class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
   >
     <!-- Toolbar -->
     <div
       ref="toolbarRef"
-      class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2"
+      class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2"
     >
       <div class="flex items-center gap-3 min-w-0">
-        <span class="text-surface-500 dark:text-surface-400 text-sm"
-          >Overview</span
-        >
-        <div v-if="!sys" class="text-surface-500">Loading...</div>
+        <span
+          class="h-2.5 w-2.5 rounded-full"
+          :class="sys ? 'bg-green-500' : 'bg-surface-300 dark:bg-surface-600'"
+          aria-hidden="true"
+        />
+        <span class="text-xs font-medium text-surface-600 dark:text-surface-300">Local system</span>
+        <div v-if="!sys" class="text-xs text-surface-500" role="status">Loading system details...</div>
         <div v-else class="text-surface-500 text-sm">
           <div v-if="hostnameVisible">
             <span
@@ -755,29 +768,35 @@ watch(
       </div>
       <div class="flex items-center gap-2 justify-end">
         <Button
-          outlined
+          text
           :icon="publicIpVisible ? 'pi pi-eye' : 'pi pi-eye-slash'"
+          :label="publicIpVisible ? 'Privacy visible' : 'Privacy hidden'"
           @click="togglePrivacy"
-          class="icon-btn"
+          class="nd-action-button"
           severity="secondary"
           title="Toggle privacy filters"
+          aria-label="Toggle privacy filters"
         />
         <Button
-          outlined
+          text
           :icon="autoInternetCheck ? 'pi pi-globe' : 'pi pi-times-circle'"
+          :label="autoInternetCheck ? 'Auto check on' : 'Auto check off'"
           @click="toggleAutoInternetCheck"
-          class="icon-btn"
+          class="nd-action-button"
           severity="secondary"
           :title="autoInternetCheck ? 'Auto Internet Check: ON' : 'Auto Internet Check: OFF'"
+          aria-label="Toggle automatic internet checks"
         />
         <Button
           outlined
           icon="pi pi-refresh"
+          label="Refresh"
           :loading="loading"
           @click="fetchAll(); refreshIpInfo(true)"
-          class="icon-btn"
+          class="nd-action-button"
           severity="secondary"
           title="Refresh data manually"
+          aria-label="Refresh dashboard data"
         />
       </div>
     </div>
@@ -789,7 +808,7 @@ watch(
         class="flex-1 min-h-0"
       >
         <div
-          class="grid grid-cols-1 xl:grid-cols-2 gap-2 content-start auto-rows-max p-1 items-stretch"
+          class="grid grid-cols-1 xl:grid-cols-2 gap-3 content-start auto-rows-max p-1 items-stretch"
         >
           <!-- Network Path -->
           <Card class="xl:col-span-2 nd-path-card">
@@ -815,19 +834,15 @@ watch(
                   </template>
 
                   <template #content="{ item }">
-                    <Card class="nd-node-card" @click="onPathNodeClick(item)">
-                      <template #title>
-                        <div class="text-sm font-semibold">{{ item.title }}</div>
-                      </template>
-                      <template #subtitle>
-                        <div
-                          class="text-xs font-mono truncate"
-                          :class="{ 'text-surface-500': !publicIpVisible }"
-                        >
-                          {{ item.subtitle ?? "" }}
-                        </div>
-                      </template>
-                    </Card>
+                    <button type="button" class="nd-node-card" @click="onPathNodeClick(item)">
+                      <span class="block text-sm font-semibold">{{ item.title }}</span>
+                      <span
+                        class="mt-1 block truncate font-mono text-xs"
+                        :class="{ 'text-surface-500': !publicIpVisible }"
+                      >
+                        {{ item.subtitle ?? "" }}
+                      </span>
+                    </button>
                   </template>
                 </Timeline>
               </div>
@@ -864,8 +879,22 @@ watch(
             </template>
             <template #content>
               <div class="flex flex-col gap-4 text-sm h-full">
-                <div v-if="!defaultIface" class="text-surface-500">
-                  No default interface detected.
+                <div v-if="!defaultIface" class="nd-empty-state">
+                  <span class="nd-empty-icon"><i class="pi pi-arrows-h" aria-hidden="true" /></span>
+                  <div class="mt-4 text-base font-semibold text-surface-900 dark:text-surface-0">
+                    No default interface detected
+                  </div>
+                  <p class="mt-1 max-w-sm text-sm text-surface-500">
+                    Connect a network adapter or choose an interface to begin monitoring.
+                  </p>
+                  <Button
+                    label="Open Interfaces"
+                    icon="pi pi-arrow-right"
+                    icon-pos="right"
+                    class="mt-4"
+                    outlined
+                    @click="router.push({ name: 'interfaces' })"
+                  />
                 </div>
                 <div v-else class="flex flex-col gap-4 text-sm">
                   <!-- Overview / Performance -->
@@ -1039,13 +1068,22 @@ watch(
             </template>
             <template #content>
               <div class="flex flex-col gap-3 text-sm h-full">
-                <div class="flex-1 min-h-75">
+                <div v-if="defaultIface" class="flex-1 min-h-75">
                   <Chart
                     type="line"
                     :data="trafficData"
                     :options="trafficOptions"
                     class="w-full h-full"
                   />
+                </div>
+                <div v-else class="nd-empty-state">
+                  <span class="nd-empty-icon"><i class="pi pi-chart-line" aria-hidden="true" /></span>
+                  <div class="mt-4 text-base font-semibold text-surface-900 dark:text-surface-0">
+                    No traffic data available
+                  </div>
+                  <p class="mt-1 max-w-sm text-sm text-surface-500">
+                    Select a default interface to start viewing live RX and TX traffic.
+                  </p>
                 </div>
                 <div class="grid grid-cols-2 gap-3 mt-2">
                   <!-- RX stats -->

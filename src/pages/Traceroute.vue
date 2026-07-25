@@ -119,6 +119,7 @@ async function toTraceSetting(): Promise<TraceSetting> {
 }
 
 async function startTrace() {
+  if (running.value || !form.host.trim()) return;
   resetResult();
   canceling.value = false;
   running.value = true;
@@ -162,6 +163,7 @@ onMounted(async () => {
   unlistenProgress = await listen("traceroute:progress", (ev: any) => {
     const hop: TraceHop | undefined = ev?.payload;
     if (!hop) return;
+    if (opId.value && hop.run_id !== opId.value) return;
 
     hops.value = [...hops.value, hop];
 
@@ -188,6 +190,7 @@ onMounted(async () => {
   // done
   unlistenDone = await listen("traceroute:done", (ev: any) => {
     const payload: TraceDonePayload | undefined = ev?.payload;
+    if (opId.value && payload?.run_id !== opId.value) return;
     if (payload) {
       doneInfo.value = payload;
     }
@@ -198,6 +201,7 @@ onMounted(async () => {
   // error
   unlistenError = await listen("traceroute:error", (ev: any) => {
     const p = ev?.payload ?? {};
+    if (opId.value && p.run_id !== opId.value) return;
     if (p.message) {
       err.value = String(p.message);
     }
@@ -242,11 +246,11 @@ function fmtIp(ip?: string | null) {
 </script>
 
 <template>
-  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
+  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
     <!-- Toolbar -->
     <div
       ref="toolbarRef"
-      class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-3"
+      class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-3"
     >
       <!-- Left: controls -->
       <div class="flex flex-wrap items-end gap-3 min-w-0">
@@ -276,6 +280,7 @@ function fmtIp(ip?: string | null) {
             class="w-[220px]"
             aria-label="Host or IP address"
             size="small"
+            @keydown.enter.prevent="startTrace"
           />
         </div>
 
@@ -382,7 +387,7 @@ function fmtIp(ip?: string | null) {
                   - RTT: {{ fmtMs(lastHop.rtt_ms as any) }}
                 </div>
               </div>
-              <div v-if="err" class="mt-3 text-red-500 text-sm">
+              <div v-if="err" class="mt-3 text-red-500 text-sm" role="alert">
                 {{ err }}
               </div>
               <div class="text-xs text-surface-500 mt-3">

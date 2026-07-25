@@ -140,6 +140,50 @@ impl PingStat {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(seq: u32, rtt_ms: Option<u64>, status: ProbeStatus) -> PingSample {
+        PingSample {
+            seq,
+            ip_addr: "127.0.0.1".parse().expect("valid test IP"),
+            hostname: None,
+            port: None,
+            rtt_ms,
+            probe_status: status,
+            protocol: PingProtocol::Icmp,
+        }
+    }
+
+    #[test]
+    fn calculates_ping_statistics_from_successful_samples() {
+        let samples = vec![
+            sample(1, Some(10), ProbeStatus::new()),
+            sample(2, Some(20), ProbeStatus::new()),
+            sample(
+                3,
+                None,
+                ProbeStatus::with_timeout_message("timeout".to_string()),
+            ),
+        ];
+        let stat = PingStat::from_samples(
+            None,
+            "127.0.0.1".parse().expect("valid test IP"),
+            None,
+            PingProtocol::Icmp,
+            samples,
+        );
+
+        assert_eq!(stat.transmitted_count, 3);
+        assert_eq!(stat.received_count, 2);
+        assert_eq!(stat.min, Some(10));
+        assert_eq!(stat.avg, Some(15));
+        assert_eq!(stat.max, Some(20));
+        assert!((stat.loss_rate() - (1.0 / 3.0)).abs() < f64::EPSILON);
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PingStartPayload {
     pub run_id: String,

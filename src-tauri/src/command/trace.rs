@@ -8,18 +8,9 @@ use crate::model::trace::{TraceErrorPayload, TraceProtocol, TraceStartPayload, T
 use crate::operation::OP_TRACEROUTE;
 use crate::probe::trace;
 
-fn sanitize_setting(mut setting: TracerouteSetting) -> TracerouteSetting {
-    if setting.max_hops == 0 {
-        setting.max_hops = 30;
-    }
-    if setting.tries_per_hop == 0 {
-        setting.tries_per_hop = 1;
-    }
-    setting
-}
-
 #[tauri::command]
 pub async fn traceroute(app: AppHandle, setting: TracerouteSetting) -> Result<(), String> {
+    super::validation::validate_traceroute(&setting)?;
     let default_interface: Interface = netdev::get_default_interface()
         .map_err(|e| format!("Failed to get default interface: {}", e))?;
     let src_ip = match setting.ip_addr {
@@ -43,8 +34,6 @@ pub async fn traceroute(app: AppHandle, setting: TracerouteSetting) -> Result<()
         }
     };
 
-    let setting = sanitize_setting(setting);
-
     let run_id = uuid::Uuid::new_v4().to_string();
 
     let token = crate::operation::start_op(OP_TRACEROUTE);
@@ -58,6 +47,7 @@ pub async fn traceroute(app: AppHandle, setting: TracerouteSetting) -> Result<()
     );
 
     tauri::async_runtime::spawn(async move {
+        let cancellation = token.clone();
         let res = match setting.protocol {
             TraceProtocol::Icmp => {
                 trace::icmp::icmp_traceroute(&app, &run_id, src_ip, &setting, token).await
@@ -73,6 +63,7 @@ pub async fn traceroute(app: AppHandle, setting: TracerouteSetting) -> Result<()
                 app.emit(
                     "traceroute:done",
                     &serde_json::json!({
+                        "run_id": run_id,
                         "reached": reached,
                         "hops": setting.max_hops,
                         "ip_addr": setting.ip_addr,
@@ -83,6 +74,9 @@ pub async fn traceroute(app: AppHandle, setting: TracerouteSetting) -> Result<()
                 .ok();
             }
             Err(e) => {
+                if cancellation.is_cancelled() {
+                    return;
+                }
                 // Emit error event
                 let _ = app.emit(
                     "traceroute:error",

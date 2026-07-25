@@ -87,7 +87,7 @@ pub async fn measure_latency_jitter(app: &AppHandle, samples: u32) -> Result<()>
 }
 
 fn median(mut v: Vec<f64>) -> f64 {
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    v.sort_by(f64::total_cmp);
     let n = v.len();
     if n == 0 {
         return f64::NAN;

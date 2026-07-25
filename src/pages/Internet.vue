@@ -279,15 +279,15 @@ function fmtDuration(ms: number): string {
 </script>
 
 <template>
-  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
+  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
     <!-- Toolbar -->
-    <div ref="toolbarRef" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2">
+    <div ref="toolbarRef" class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2">
       <div class="flex items-center gap-3 min-w-0">
         <span class="text-surface-500 dark:text-surface-400 text-sm">Public IP Information</span>
       </div>
       <div class="flex items-center gap-2 justify-end">
-        <Button outlined :icon="publicIpVisible ? 'pi pi-eye' : 'pi pi-eye-slash'" @click="togglePublicIp" class="icon-btn" severity="secondary" />
-        <Button outlined icon="pi pi-refresh" :loading="loading" @click="refresh" class="icon-btn" severity="secondary" />
+        <Button outlined :icon="publicIpVisible ? 'pi pi-eye' : 'pi pi-eye-slash'" @click="togglePublicIp" class="icon-btn" severity="secondary" :aria-label="publicIpVisible ? 'Hide public IP addresses' : 'Show public IP addresses'" />
+        <Button outlined icon="pi pi-refresh" :loading="loading" @click="refresh" class="icon-btn" severity="secondary" aria-label="Refresh internet information" />
       </div>
     </div>
 
@@ -388,8 +388,8 @@ function fmtDuration(ms: number): string {
           <!-- Speed Test card (full width) -->
           <Card class="md:col-span-2">
             <template #title>
-              <div class="flex items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center justify-end gap-2">
                   <span>Speed Test</span>
                   <Tag :severity="badgeSeverity()" :value="badgeLabel()" />
                 </div>
@@ -419,6 +419,7 @@ function fmtDuration(ms: number): string {
                     :disabled="stRunning || stStarting"
                     class="w-36"
                     size="small"
+                    aria-label="Speed test size"
                   />
                   <Button
                     icon="pi pi-play"
@@ -476,7 +477,7 @@ function fmtDuration(ms: number): string {
                 </div>
               </div>
 
-              <div class="mt-3">
+              <div class="mt-3" role="status" aria-live="polite">
                 <div class="flex items-center justify-between text-sm">
                   <div class="text-surface-500">
                     Progress: <span class="text-surface-900 dark:text-surface-0">{{ transferredText }}</span> / <span class="text-surface-900 dark:text-surface-0">{{ targetText }}</span>

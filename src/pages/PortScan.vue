@@ -168,7 +168,7 @@ function resetResult() {
 const canStart = computed(() => !!form.host.trim());
 
 async function startScan() {
-  if (!canStart.value) return;
+  if (!canStart.value || running.value) return;
   resetResult();
   running.value = true;
   loading.value = true;
@@ -177,7 +177,10 @@ async function startScan() {
     const setting = await toSetting();
     await invoke<PortScanReport>("port_scan", { setting });
   } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    const message = String(e?.message ?? e);
+    if (!cancelled.value && message.toLowerCase() !== "cancelled") {
+      err.value = message;
+    }
     running.value = false;
   } finally {
     loading.value = false;
@@ -322,12 +325,12 @@ onBeforeUnmount(() => {
 <template>
   <div
     ref="wrapRef"
-    class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
+    class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
   >
     <!-- Toolbar -->
     <div
       ref="toolbarRef"
-      class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-center"
+      class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-center"
     >
       <!-- Left: form controls -->
       <div class="flex items-end gap-3 min-w-0 flex-wrap">
@@ -341,6 +344,7 @@ onBeforeUnmount(() => {
             ]"
             optionLabel="label"
             optionValue="value"
+            aria-label="Scan protocol"
             class="min-w-[120px]"
             size="small"
           />
@@ -351,6 +355,8 @@ onBeforeUnmount(() => {
           <InputText
             v-model="form.host"
             placeholder="e.g. 192.168.1.1 or host"
+            aria-label="Host or IP address"
+            @keydown.enter.prevent="startScan"
             class="w-60"
             size="small"
           />
@@ -369,6 +375,7 @@ onBeforeUnmount(() => {
             ]"
             optionLabel="label"
             optionValue="value"
+            aria-label="Port preset"
             class="min-w-[140px]"
             size="small"
           />
@@ -379,6 +386,7 @@ onBeforeUnmount(() => {
           <InputText
             v-model="form.userPortsText"
             placeholder="e.g. 80,443,8080-8090"
+            aria-label="Custom ports"
             class="w-[220px]"
             size="small"
           />
@@ -393,6 +401,7 @@ onBeforeUnmount(() => {
             :step="100"
             inputClass="w-[80px]"
             size="small"
+            aria-label="Timeout in milliseconds"
           />
         </div>
 
@@ -453,6 +462,8 @@ onBeforeUnmount(() => {
             <template #content>
               <div
                 class="flex items-center justify-between mb-2 text-sm text-surface-500"
+                role="status"
+                aria-live="polite"
               >
                 <div>Total: {{ progressTotal || "-" }}</div>
                 <div>Done: {{ progressDone }} / {{ progressTotal || "-" }}</div>
@@ -468,7 +479,7 @@ onBeforeUnmount(() => {
           <Card>
             <template #title>Results</template>
             <template #content>
-              <div v-if="err" class="text-red-500 text-sm mb-2">
+              <div v-if="err" class="text-red-500 text-sm mb-2" role="alert">
                 {{ err }}
               </div>
               <div
@@ -479,6 +490,7 @@ onBeforeUnmount(() => {
               <div
                 v-if="serviceDetecting"
                 class="mb-2 text-xs text-surface-500 flex items-center gap-2"
+                role="status"
               >
                 <i class="pi pi-spin pi-spinner"></i>
                 <span>Service detection in progress...</span>

@@ -19,6 +19,7 @@ let rafId: number | null = null;
 let scheduled = false;
 
 const loading = ref(false);
+const error = ref<string | null>(null);
 const sockets = ref<SocketInfo[]>([]);
 const q = ref("");
 const family = ref<"All" | "Ipv4" | "Ipv6">("All");
@@ -97,8 +98,11 @@ function rowKey(s: SocketInfo): string {
 
 async function fetchSockets() {
   loading.value = true;
+  error.value = null;
   try {
     sockets.value = (await invoke("get_sockets_all")) as SocketInfo[];
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
     loading.value = false;
   }
@@ -209,11 +213,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
+  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
     <!-- Toolbar -->
     <div
     ref="toolbarRef"
-    class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2"
+    class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2"
     >
       <div class="flex items-center gap-3 min-w-0">
           <span class="text-surface-500 dark:text-surface-400 text-sm">
@@ -233,6 +237,7 @@ onBeforeUnmount(() => {
           optionValue="value"
           class="w-28 shrink-0" 
           size="small"
+          aria-label="Socket protocol"
         />
         <Select
           v-model="family"
@@ -245,6 +250,7 @@ onBeforeUnmount(() => {
           optionValue="value"
           class="w-28 shrink-0" 
           size="small"
+          aria-label="Address family"
         />
         <InputGroup class="flex-1 min-w-0 max-w-[260px]">
             <InputGroupAddon><i class="pi pi-search" /></InputGroupAddon>
@@ -253,6 +259,7 @@ onBeforeUnmount(() => {
               placeholder="Search (addr/port/proc/state...)"
               class="flex-1 min-w-0" 
               size="small"
+              aria-label="Search sockets"
             />
         </InputGroup>
         <Button
@@ -262,8 +269,13 @@ onBeforeUnmount(() => {
           @click="fetchSockets"
           class="icon-btn"
           severity="secondary"
+          aria-label="Refresh sockets"
         />
       </div>
+    </div>
+
+    <div v-if="error" class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200" role="alert">
+      Failed to load sockets: {{ error }}
     </div>
 
     <!-- Table -->

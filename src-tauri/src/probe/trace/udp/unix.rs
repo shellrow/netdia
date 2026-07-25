@@ -1,4 +1,4 @@
-use crate::model::trace::TracerouteSetting;
+use crate::model::trace::{TraceCancelledPayload, TracerouteSetting};
 use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
 use crate::socket::udp::{AsyncUdpSocket, UdpConfig};
 use crate::socket::SocketFamily;
@@ -63,7 +63,12 @@ pub async fn udp_traceroute(
         use crate::model::trace::TraceHop;
 
         if token.is_cancelled() {
-            let _ = app.emit("traceroute:cancelled", run_id.to_string());
+            let _ = app.emit(
+                "traceroute:cancelled",
+                TraceCancelledPayload {
+                    run_id: run_id.to_string(),
+                },
+            );
             return Err(anyhow::anyhow!("cancelled"));
         }
         let mut ucfg = UdpConfig::new();
@@ -81,6 +86,7 @@ pub async fn udp_traceroute(
         let local_addr = udp.local_addr()?;
 
         let mut best = TraceHop {
+            run_id: run_id.to_string(),
             hop: ttl,
             ip_addr: None,
             rtt_ms: None,
@@ -150,8 +156,6 @@ pub async fn udp_traceroute(
         app.emit("traceroute:progress", &best).ok();
 
         if token.is_cancelled() {
-            use crate::model::trace::TraceCancelledPayload;
-
             let _ = app.emit(
                 "traceroute:cancelled",
                 TraceCancelledPayload {

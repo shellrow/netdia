@@ -51,7 +51,7 @@ impl ThrottledProgress {
         let mut last_ts = self
             .last_emit_at
             .lock()
-            .expect("ThrottledProgress::last_emit_at poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let elapsed = last_ts.elapsed();
         let time_ok = elapsed >= self.min_interval;
 

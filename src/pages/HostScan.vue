@@ -103,6 +103,7 @@ async function refreshTargetPreview() {
 }
 
 async function startScan() {
+  if (!canStart.value) return;
   resetResult();
 
   const preview = await invoke<HostScanTargetPreview>("preview_host_scan_targets", {
@@ -137,7 +138,10 @@ async function startScan() {
   try {
     await invoke("host_scan", { setting });
   } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    const message = String(e?.message ?? e);
+    if (!cancelled.value && message.toLowerCase() !== "cancelled") {
+      err.value = message;
+    }
     running.value = false;
   } finally {
     loading.value = false;
@@ -254,12 +258,12 @@ onBeforeUnmount(() => {
 <template>
   <div
     ref="wrapRef"
-    class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
+    class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
   >
     <!-- Toolbar -->
     <div
       ref="toolbarRef"
-      class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-center"
+      class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-center"
     >
       <div class="flex items-end gap-3 min-w-0 flex-wrap">
         <!-- Mode -->
@@ -273,6 +277,7 @@ onBeforeUnmount(() => {
             ]"
             optionLabel="label"
             optionValue="value"
+            aria-label="Target input mode"
             class="min-w-40"
             size="small"
           />
@@ -284,13 +289,15 @@ onBeforeUnmount(() => {
           <InputText
             v-model="form.cidr"
             placeholder="e.g. 192.168.1.0/24"
+            aria-label="IPv4 CIDR range"
+            @keydown.enter.prevent="startScan"
             class="w-[220px]"
             size="small"
           />
         </div>
         <div v-else class="flex flex-col gap-1">
           <label class="text-xs text-surface-500">Host List (newline / space / comma)</label>
-          <Textarea v-model="form.list" rows="2" class="w-[280px]" size="small" />
+          <Textarea v-model="form.list" rows="2" class="w-[280px]" size="small" aria-label="Host or IP address list" />
         </div>
 
         <!-- Options -->
@@ -303,6 +310,7 @@ onBeforeUnmount(() => {
             :step="100"
             inputClass="w-[120px]"
             size="small"
+            aria-label="Timeout in milliseconds"
           />
         </div>
         <div class="flex flex-col gap-1">
@@ -313,6 +321,7 @@ onBeforeUnmount(() => {
             :max="255"
             inputClass="w-[120px]"
             size="small"
+            aria-label="Hop limit"
           />
         </div>
 
@@ -356,7 +365,7 @@ onBeforeUnmount(() => {
           <Card>
             <template #title>Progress</template>
             <template #content>
-              <div class="flex items-center justify-between mb-2 text-sm text-surface-500">
+              <div class="flex items-center justify-between mb-2 text-sm text-surface-500" role="status" aria-live="polite">
                 <div>Scanned: {{ progressDone }} / {{ progressTotal || "-" }}</div>
                 <div>{{ progressPct }}%</div>
               </div>
@@ -372,7 +381,7 @@ onBeforeUnmount(() => {
           <Card>
             <template #title>Summary</template>
             <template #content>
-              <div v-if="err" class="text-red-500 text-sm mb-2">
+              <div v-if="err" class="text-red-500 text-sm mb-2" role="alert">
                 {{ err }}
               </div>
 

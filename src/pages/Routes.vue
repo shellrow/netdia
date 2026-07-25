@@ -16,6 +16,7 @@ let rafId: number | null = null;
 let scheduled = false;
 
 const loading = ref(false);
+const error = ref<string | null>(null);
 const routes = ref<RouteEntry[]>([]);
 const q = ref("");
 const family = ref<RouteFamily>("All");
@@ -50,8 +51,11 @@ function scheduleRecalc() {
 
 async function fetchRoutes() {
   loading.value = true;
+  error.value = null;
   try {
     routes.value = (await invoke("get_routes")) as RouteEntry[];
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause);
   } finally {
     loading.value = false;
   }
@@ -97,20 +101,24 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
+  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
     <!-- Toolbar -->
-    <div ref="toolbarRef" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2">
+    <div ref="toolbarRef" class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2">
       <div class="flex items-center gap-3 min-w-0">
         <span class="text-surface-500 dark:text-surface-400 text-sm">Routing Table ({{ filtered.length }})</span>
       </div>
       <div class="flex items-center gap-2 justify-end">
-        <Select v-model="family" :options="[{label:'All', value:'All'},{label:'IPv4', value:'Ipv4'},{label:'IPv6', value:'Ipv6'}]" optionLabel="label" optionValue="value" class="w-28" size="small" />
+        <Select v-model="family" :options="[{label:'All', value:'All'},{label:'IPv4', value:'Ipv4'},{label:'IPv6', value:'Ipv6'}]" optionLabel="label" optionValue="value" class="w-28" size="small" aria-label="Address family" />
         <InputGroup class="max-w-[220px]">
           <InputGroupAddon><i class="pi pi-search"/></InputGroupAddon>
-          <InputText v-model="q" placeholder="Search (dst/gw/if/flags...)" size="small" />
+          <InputText v-model="q" placeholder="Search (dst/gw/if/flags...)" size="small" aria-label="Search routes" />
         </InputGroup>
-        <Button outlined icon="pi pi-refresh" :loading="loading" @click="fetchRoutes" class="icon-btn" severity="secondary" />
+        <Button outlined icon="pi pi-refresh" :loading="loading" @click="fetchRoutes" class="icon-btn" severity="secondary" aria-label="Refresh routes" />
       </div>
+    </div>
+
+    <div v-if="error" class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200" role="alert">
+      Failed to load routes: {{ error }}
     </div>
 
     <!-- Table -->

@@ -197,13 +197,21 @@ pub async fn host_scan(
                             );
                         }
 
-                        let pkt = build_icmp_echo_bytes(
+                        let pkt = match build_icmp_echo_bytes(
                             src_ip,
                             dst_ip,
                             id,
                             seq as u16,
                             payload.as_bytes(),
-                        );
+                        ) {
+                            Ok(packet) => packet,
+                            Err(error) => {
+                                let mut map = pending_map.lock().await;
+                                map.remove(&dst_ip);
+                                last_err = Some(error.to_string());
+                                continue;
+                            }
+                        };
 
                         let send_res = tokio::select! {
                             _ = token.cancelled() => {

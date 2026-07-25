@@ -126,8 +126,9 @@ pub async fn tcp_ping(
         {
             Ok(mut stream) => {
                 // Handshake done. Connected.
-                rtt_ms = Some(started.elapsed().as_millis() as u64);
-                rtts_ok.push(rtt_ms.unwrap());
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                rtt_ms = Some(elapsed_ms);
+                rtts_ok.push(elapsed_ms);
                 // Close the connection
                 let _ = stream.shutdown().await;
             }

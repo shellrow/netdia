@@ -94,7 +94,10 @@ async function startScan() {
   try {
     await invoke("neighbor_scan", { ifaceName: selectedIf.value ?? null });
   } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    const message = String(e?.message ?? e);
+    if (!cancelled.value && message.toLowerCase() !== "cancelled") {
+      err.value = message;
+    }
     running.value = false;
   } finally {
     loading.value = false;
@@ -191,8 +194,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
-    <div ref="toolbarRef" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-start gap-3">
+  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
+    <div ref="toolbarRef" class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-start gap-3">
       <div class="flex items-center gap-3 min-w-0 flex-wrap">
         <div class="text-surface-500 dark:text-surface-400 text-sm">Neighbor Scan</div>
 
@@ -205,6 +208,7 @@ onBeforeUnmount(() => {
           class="min-w-64"
           :disabled="running || loading"
           size="small"
+          aria-label="Network interface"
         />
         <Tag v-if="selectedIf" :value="selectedCidr" class="font-mono" severity="info"/>
         <span v-else class="text-surface-500 text-xs">No eligible interface</span>
@@ -237,7 +241,7 @@ onBeforeUnmount(() => {
           <Card>
             <template #title>Progress</template>
             <template #content>
-              <div class="flex items-center justify-between mb-2 text-sm text-surface-500">
+              <div class="flex items-center justify-between mb-2 text-sm text-surface-500" role="status" aria-live="polite">
                 <div>Scanned: {{ progressDone }} / {{ progressTotal || "-" }}</div>
                 <div>{{ progressPct }}%</div>
               </div>
@@ -252,7 +256,7 @@ onBeforeUnmount(() => {
           <Card>
             <template #title>Neighbors</template>
             <template #content>
-              <div v-if="err" class="text-red-500 text-sm mb-2">{{ err }}</div>
+              <div v-if="err" class="text-red-500 text-sm mb-2" role="alert">{{ err }}</div>
 
               <template v-if="report">
                 <div class="grid grid-cols-2 gap-3 text-sm mb-3">

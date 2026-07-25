@@ -57,9 +57,9 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
 </script>
 
 <template>
-  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
+  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
     <!-- Toolbar -->
-    <div ref="toolbarRef" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2">
+    <div ref="toolbarRef" class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2">
       <div class="flex items-center gap-3 min-w-0">
         <span class="text-surface-500 dark:text-surface-400 text-sm">DNS Records</span>
       </div>
@@ -69,6 +69,7 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
           <InputText
             v-model="q"
             placeholder="domain (e.g. example.com)"
+            aria-label="Domain name"
             @keydown="onEnter"
             class="flex-1 min-w-0"
             size="small"
@@ -86,8 +87,8 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
         <Card>
           <template #title>Summary</template>
           <template #content>
-            <div v-if="err" class="text-red-500 text-sm">{{ err }}</div>
-            <div v-else-if="loading" class="text-surface-500">Resolving...</div>
+            <div v-if="err" class="text-red-500 text-sm" role="alert">{{ err }}</div>
+            <div v-else-if="loading" class="text-surface-500" role="status" aria-live="polite">Resolving...</div>
             <div v-else-if="data">
               <div class="flex flex-wrap items-center gap-2 mb-2">
                 <span class="text-sm text-surface-500">Domain</span>

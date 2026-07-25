@@ -31,16 +31,16 @@ impl IcmpSocketType {
     }
 
     /// Converts the ICMP socket type from a `socket2::Type`.
-    pub(crate) fn from_sock_type(sock_type: SockType) -> Self {
+    pub(crate) fn from_sock_type(sock_type: SockType) -> io::Result<Self> {
         match sock_type {
-            SockType::DGRAM => IcmpSocketType::Dgram,
-            SockType::RAW => IcmpSocketType::Raw,
-            _ => panic!("Invalid ICMP socket type"),
+            SockType::DGRAM => Ok(IcmpSocketType::Dgram),
+            SockType::RAW => Ok(IcmpSocketType::Raw),
+            _ => Err(io::Error::other("unsupported ICMP socket type")),
         }
     }
 
     /// Converts the ICMP socket type to a `socket2::Type`.
-    pub(crate) fn to_sock_type(&self) -> SockType {
+    pub(crate) fn to_sock_type(self) -> SockType {
         match self {
             IcmpSocketType::Dgram => SockType::DGRAM,
             IcmpSocketType::Raw => SockType::RAW,
@@ -220,7 +220,7 @@ impl AsyncIcmpSocket {
 
         Ok(Self {
             inner,
-            socket_type: IcmpSocketType::from_sock_type(sock_type),
+            socket_type: IcmpSocketType::from_sock_type(sock_type)?,
             socket_family: config.socket_family,
         })
     }

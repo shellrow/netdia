@@ -137,11 +137,11 @@ const filtered = computed(() => {
 </script>
 
 <template>
-  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 flex-1 min-h-0 h-full">
+  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 flex-1 min-h-0 h-full">
     <!-- Toolbar -->
     <div
       ref="toolbarRef"
-      class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2 w-full shrink-0"
+      class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2 w-full shrink-0"
     >
       <!-- Left -->
       <div class="flex items-center gap-2 min-w-0">
@@ -168,6 +168,7 @@ const filtered = computed(() => {
           optionLabel="label"
           optionValue="value"
           placeholder="Columns"
+          aria-label="Visible interface columns"
           class="min-w-40"
           :maxSelectedLabels="4" 
           size="small"
@@ -179,6 +180,7 @@ const filtered = computed(() => {
           <InputText
             v-model="globalFilter"
             placeholder="Search (name/ip/mac...)"
+            aria-label="Search interfaces"
             class="flex-1 min-w-0"
             size="small"
           />
@@ -191,6 +193,7 @@ const filtered = computed(() => {
           class="icon-btn"
           :loading="loading"
           @click="reloadInterfaces"
+          aria-label="Refresh interfaces"
         />
       </div>
     </div>

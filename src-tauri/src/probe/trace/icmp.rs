@@ -54,8 +54,7 @@ pub async fn icmp_traceroute(
     };
 
     let timeout = Duration::from_millis(setting.timeout_ms);
-    // TODO: echo_id should be randomized per run
-    let echo_id: u16 = 0x1234;
+    let echo_id = fastrand::u16(1..=u16::MAX);
     let payload = b"netd";
 
     // Whether reached the destination at any hop
@@ -63,7 +62,12 @@ pub async fn icmp_traceroute(
 
     'ttl_loop: for ttl in 1..=setting.max_hops {
         if token.is_cancelled() {
-            let _ = app.emit("traceroute:cancelled", run_id.to_string());
+            let _ = app.emit(
+                "traceroute:cancelled",
+                TraceCancelledPayload {
+                    run_id: run_id.to_string(),
+                },
+            );
             return Err(anyhow::anyhow!("cancelled"));
         }
         // Create socket for each TTL/HopLimit
@@ -84,6 +88,7 @@ pub async fn icmp_traceroute(
         let target = SocketAddr::new(dst_ip, 0);
 
         let mut best: TraceHop = TraceHop {
+            run_id: run_id.to_string(),
             hop: ttl,
             ip_addr: None,
             rtt_ms: None,
@@ -93,7 +98,7 @@ pub async fn icmp_traceroute(
 
         for t in 0..setting.tries_per_hop {
             let seq = ((ttl as u16) << 8) | (t as u16);
-            let pkt = build_icmp_echo_bytes(src_ip, dst_ip, echo_id, seq, payload);
+            let pkt = build_icmp_echo_bytes(src_ip, dst_ip, echo_id, seq, payload)?;
 
             let sent_at = Instant::now();
 

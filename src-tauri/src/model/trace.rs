@@ -29,6 +29,7 @@ pub struct TracerouteSetting {
 /// Result for one hop
 #[derive(Clone, Debug, Serialize)]
 pub struct TraceHop {
+    pub run_id: String,
     pub hop: u8,
     pub ip_addr: Option<IpAddr>,
     pub rtt_ms: Option<u64>,
@@ -40,8 +41,9 @@ pub struct TraceHop {
 
 impl TraceHop {
     #[allow(dead_code)]
-    pub fn timeout(hop: u8) -> Self {
+    pub fn timeout(run_id: impl Into<String>, hop: u8) -> Self {
         Self {
+            run_id: run_id.into(),
             hop,
             ip_addr: None,
             rtt_ms: None,

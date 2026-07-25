@@ -59,6 +59,7 @@ async function toPingSetting(): Promise<PingSetting> {
 }
 
 async function startPing() {
+  if (running.value || !form.host.trim()) return;
   resetResult();
   canceling.value = false;
   running.value = true;
@@ -116,10 +117,12 @@ onMounted(async () => {
     const s: PingStat | undefined = p.stat ?? ev?.payload;
     if (s) stat.value = s;
     running.value = false;
+    canceling.value = false;
   });
 
   unlistenError = await listen("ping:error", (ev:any) => {
     const p = ev?.payload ?? {};
+    if (opId.value && p.run_id !== opId.value) return;
     if (p.message) {
       err.value = String(p.message);
     }
@@ -154,9 +157,9 @@ const lossRate = computed(() => {
 </script>
 
 <template>
-  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
+  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
     <!-- Toolbar -->
-    <div ref="toolbarRef" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-3">
+    <div ref="toolbarRef" class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-3">
       <!-- Left: filters -->
       <div class="flex flex-wrap items-end gap-3 min-w-0">
         <!-- Protocol -->
@@ -188,6 +191,7 @@ const lossRate = computed(() => {
             class="w-[200px]"
             aria-label="Host or IP address"
             size="small"
+            @keydown.enter.prevent="startPing"
           />
         </div>
 
@@ -283,7 +287,7 @@ const lossRate = computed(() => {
         <Card>
           <template #title>Progress</template>
           <template #content>
-            <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center justify-between mb-2" role="status" aria-live="polite">
               <div class="text-sm text-surface-500">Sent: {{ sentCount }} / {{ form.count }}</div>
               <div class="text-sm text-surface-500">Recv: {{ recvCount }} (loss {{ lossRate }}%)</div>
             </div>
@@ -325,7 +329,7 @@ const lossRate = computed(() => {
         <Card>
           <template #title>Summary</template>
           <template #content>
-            <div v-if="err" class="text-red-500 text-sm" aria-live="polite">{{ err }}</div>
+            <div v-if="err" class="text-red-500 text-sm" role="alert">{{ err }}</div>
             <template v-else>
               <div class="grid grid-cols-2 gap-3 text-sm">
                 <div class="rounded-lg bg-surface-50 dark:bg-surface-900 p-3">
