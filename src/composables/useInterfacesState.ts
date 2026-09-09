@@ -1,6 +1,7 @@
 import { ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { createListenerScope } from "../utils/listenerScope";
 import type { NetworkInterface } from "../types/net";
 
 const interfaces = ref<NetworkInterface[]>([]);
@@ -51,6 +52,8 @@ async function handleInterfacesUpdated() {
   try {
     await fetchInterfaces(false);
     interfacesRevision.value += 1;
+  } catch {
+    // fetchInterfaces already exposes the error; event callbacks must not reject.
   } finally {
     loading.value = false;
   }
@@ -62,8 +65,15 @@ export async function ensureInterfacesState(): Promise<void> {
 
   startPromise = (async () => {
     await fetchInterfaces(true);
-    await listen("stats_updated", handleStatsUpdated);
-    await listen("interfaces_updated", handleInterfacesUpdated);
+    const scope = createListenerScope(listen);
+    try {
+      await scope.listen("stats_updated", handleStatsUpdated);
+      await scope.listen("interfaces_updated", handleInterfacesUpdated);
+    } catch (cause) {
+      scope.dispose();
+      error.value = String(cause);
+      throw cause;
+    }
     ready.value = true;
   })();
 
