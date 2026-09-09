@@ -1,38 +1,12 @@
+use crate::events::EventEmitter;
 use crate::model::trace::{TraceCancelledPayload, TraceHop, TracerouteSetting};
-use crate::probe::packet::build_icmp_echo_bytes;
+use crate::probe::packet::{build_icmp_echo_bytes, match_trace_reply};
 use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
 use anyhow::Result;
-use nex_packet::icmp::{IcmpPacket, IcmpType};
-use nex_packet::icmpv6::{Icmpv6Packet, Icmpv6Type};
-use nex_packet::ip::IpNextProtocol;
-use nex_packet::ipv4::Ipv4Packet;
-use nex_packet::packet::Packet;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
-
-/// Check if the ICMP packet is an Echo Reply for the given destination IP
-fn is_echo_reply(dst_ip: IpAddr, icmp_bytes: &[u8]) -> bool {
-    match dst_ip {
-        IpAddr::V4(_) => {
-            if let Some(ip) = Ipv4Packet::from_buf(icmp_bytes) {
-                if ip.header.next_level_protocol == IpNextProtocol::Icmp {
-                    if let Some(icmp) = IcmpPacket::from_bytes(ip.payload()) {
-                        return matches!(icmp.header.icmp_type, IcmpType::EchoReply);
-                    }
-                }
-            }
-            false
-        }
-        IpAddr::V6(_) => {
-            if let Some(icmp6) = Icmpv6Packet::from_buf(icmp_bytes) {
-                return matches!(icmp6.header.icmpv6_type, Icmpv6Type::EchoReply);
-            }
-            false
-        }
-    }
-}
 
 /// ICMP Echo based traceroute
 ///
@@ -62,7 +36,7 @@ pub async fn icmp_traceroute(
 
     'ttl_loop: for ttl in 1..=setting.max_hops {
         if token.is_cancelled() {
-            let _ = app.emit(
+            let _ = app.emit_logged(
                 "traceroute:cancelled",
                 TraceCancelledPayload {
                     run_id: run_id.to_string(),
@@ -85,6 +59,7 @@ pub async fn icmp_traceroute(
         }
 
         let socket = AsyncIcmpSocket::new(&cfg).await?;
+        let echo_id = socket.echo_identifier(echo_id)?;
         let target = SocketAddr::new(dst_ip, 0);
 
         let mut best: TraceHop = TraceHop {
@@ -111,7 +86,20 @@ pub async fn icmp_traceroute(
 
             // Recv (with timeout)
             let mut buf = vec![0u8; 2048];
-            let res = tokio::time::timeout(timeout, socket.recv_from(&mut buf)).await;
+            let res = tokio::select! {
+                _ = token.cancelled() => {
+                    app.emit_logged("traceroute:cancelled", TraceCancelledPayload { run_id: run_id.to_string() })?;
+                    anyhow::bail!("cancelled");
+                }
+                response = tokio::time::timeout(timeout, async {
+                    loop {
+                        let (n, from) = socket.recv_from(&mut buf).await?;
+                        if let Some(reached) = match_trace_reply(dst_ip, from.ip(), &buf[..n], echo_id, seq) {
+                            return Ok::<_, std::io::Error>((from, reached));
+                        }
+                    }
+                }) => response,
+            };
 
             match res {
                 Err(_) => {
@@ -122,7 +110,7 @@ pub async fn icmp_traceroute(
                     best.note = Some(format!("recv error: {e}"));
                     break;
                 }
-                Ok(Ok((n, from))) => {
+                Ok(Ok((from, destination_reached))) => {
                     let rtt = sent_at.elapsed().as_millis() as u64;
                     let from_ip = from.ip();
 
@@ -134,11 +122,11 @@ pub async fn icmp_traceroute(
                     }
 
                     // Check if the ICMP packet is an Echo Reply from the destination
-                    if is_echo_reply(dst_ip, &buf[..n]) {
+                    if destination_reached {
                         best.reached = true;
                         reached = true;
                         // Emit this hop as progress and break the ttl_loop
-                        app.emit("traceroute:progress", &best).ok();
+                        app.emit_logged("traceroute:progress", &best).ok();
                         break 'ttl_loop;
                     }
                 }
@@ -150,10 +138,10 @@ pub async fn icmp_traceroute(
             best.note = Some("timeout".into());
         }
 
-        app.emit("traceroute:progress", &best).ok();
+        app.emit_logged("traceroute:progress", &best).ok();
 
         if token.is_cancelled() {
-            let _ = app.emit(
+            let _ = app.emit_logged(
                 "traceroute:cancelled",
                 TraceCancelledPayload {
                     run_id: run_id.to_string(),

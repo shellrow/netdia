@@ -1,3 +1,4 @@
+use crate::events::EventEmitter;
 use anyhow::Result;
 use futures::{stream, StreamExt};
 use rand::{seq::SliceRandom, thread_rng, Rng};
@@ -5,7 +6,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::sync::{oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
 
@@ -14,15 +15,15 @@ use crate::model::scan::{
     HostScanCancelledPayload, HostScanProgress, HostScanProgressPayload, HostScanReport,
     HostScanSetting, HostScanStartPayload, HostState,
 };
-use crate::probe::packet::{build_icmp_echo_bytes, parse_icmp_echo_v4, parse_icmp_echo_v6};
+use crate::probe::packet::{build_icmp_echo_bytes, matches_echo_reply};
 use crate::probe::scan::progress::ThrottledProgress;
 use crate::probe::scan::tuner::hosts_concurrency;
 use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
 use crate::socket::SocketFamily;
 
 struct Pending {
-    #[allow(dead_code)]
-    ip: IpAddr,
+    id: u16,
+    seq: u16,
     sent_at: Instant,
     tx: oneshot::Sender<u64>,
 }
@@ -30,7 +31,7 @@ struct Pending {
 fn spawn_receiver(
     socket: Arc<AsyncIcmpSocket>,
     pending: Arc<Mutex<HashMap<IpAddr, Pending>>>,
-    is_v6: bool,
+    _is_v6: bool,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut buf = vec![0u8; 2048];
@@ -39,16 +40,11 @@ fn spawn_receiver(
                 // Error on recv, socket might be closed
                 break;
             };
-            let is_echo_reply = if !is_v6 {
-                // IPv4
-                parse_icmp_echo_v4(&buf[..n]).is_some()
-            } else {
-                // IPv6
-                parse_icmp_echo_v6(&buf[..n]).is_some()
-            };
-
-            if is_echo_reply {
-                let mut map = pending.lock().await;
+            let mut map = pending.lock().await;
+            let matches = map.get(&addr.ip()).is_some_and(|pending| {
+                matches_echo_reply(addr.ip(), addr.ip(), &buf[..n], pending.id, pending.seq)
+            });
+            if matches {
                 if let Some(p) = map.remove(&addr.ip()) {
                     let _ = p.tx.send(p.sent_at.elapsed().as_millis() as u64);
                 }
@@ -68,7 +64,7 @@ pub async fn host_scan(
     let app = app.clone();
     let run_id = run_id.to_string();
 
-    let _ = app.emit(
+    let _ = app.emit_logged(
         "hostscan:start",
         HostScanStartPayload {
             run_id: run_id.clone(),
@@ -86,7 +82,14 @@ pub async fn host_scan(
     }
 
     // resolve
-    let target_hosts: Vec<Host> = setting.resolve_targets().await;
+    let target_hosts: Vec<Host> = tokio::select! {
+        biased;
+        _ = token.cancelled() => {
+            let _ = app.emit_logged("hostscan:cancelled", HostScanCancelledPayload { run_id: run_id.clone() });
+            anyhow::bail!("cancelled");
+        }
+        targets = setting.resolve_targets() => targets,
+    };
     let target_map: HashMap<IpAddr, Host> =
         target_hosts.iter().map(|h| (h.ip, h.clone())).collect();
     let total = target_map.len() as u32;
@@ -98,7 +101,7 @@ pub async fn host_scan(
             unreachable: vec![],
             total,
         };
-        let _ = app.emit("hostscan:done", report.clone());
+        let _ = app.emit_logged("hostscan:done", report.clone());
         return Ok(report);
     }
 
@@ -182,7 +185,13 @@ pub async fn host_scan(
                             return None;
                         }
 
-                        let id: u16 = rand::thread_rng().gen();
+                        let id = match sock.echo_identifier(rand::thread_rng().gen()) {
+                            Ok(id) => id,
+                            Err(error) => {
+                                last_err = Some(error.to_string());
+                                break;
+                            }
+                        };
                         let (tx, rx) = oneshot::channel::<u64>();
 
                         {
@@ -190,7 +199,8 @@ pub async fn host_scan(
                             map.insert(
                                 dst_ip,
                                 Pending {
-                                    ip: dst_ip,
+                                    id,
+                                    seq: seq as u16,
                                     sent_at: Instant::now(),
                                     tx,
                                 },
@@ -280,11 +290,11 @@ pub async fn host_scan(
                 };
 
                 if matches!(sample.state, HostState::Alive) {
-                    let _ = app.emit("hostscan:alive", sample.clone());
+                    let _ = app.emit_logged("hostscan:alive", sample.clone());
                 }
 
                 if should_emit {
-                    let _ = app.emit(
+                    let _ = app.emit_logged(
                         "hostscan:progress",
                         HostScanProgressPayload {
                             run_id: run_id.clone(),
@@ -342,13 +352,15 @@ pub async fn host_scan(
     drop(socket_v6);
     if let Some(h) = rx_v4 {
         h.abort();
+        let _ = h.await;
     }
     if let Some(h) = rx_v6 {
         h.abort();
+        let _ = h.await;
     }
 
     if cancelled || token.is_cancelled() {
-        let _ = app.emit(
+        let _ = app.emit_logged(
             "hostscan:cancelled",
             HostScanCancelledPayload {
                 run_id: run_id.clone(),
@@ -364,6 +376,70 @@ pub async fn host_scan(
         total,
     };
 
-    let _ = app.emit("hostscan:done", report.clone());
+    let _ = app.emit_logged("hostscan:done", report.clone());
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn live_scan_receiver(address: &str) {
+        let ip: IpAddr = address.parse().unwrap();
+        let kind = if ip.is_ipv4() {
+            IcmpKind::V4
+        } else {
+            IcmpKind::V6
+        };
+        let socket = Arc::new(AsyncIcmpSocket::new(&IcmpConfig::new(kind)).await.unwrap());
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let receiver = spawn_receiver(socket.clone(), pending.clone(), ip.is_ipv6());
+        let id = socket.echo_identifier(0x4321).unwrap();
+        let (tx, mut rx) = oneshot::channel();
+        pending.lock().await.insert(
+            ip,
+            Pending {
+                id,
+                seq: 7,
+                sent_at: Instant::now(),
+                tx,
+            },
+        );
+
+        // A reply to a different probe must not consume the pending target.
+        let stale = build_icmp_echo_bytes(ip, ip, id, 6, b"netd").unwrap();
+        socket
+            .send_to(&stale, SocketAddr::new(ip, 0))
+            .await
+            .unwrap();
+        let unrelated = tokio::time::timeout(Duration::from_millis(100), &mut rx).await;
+        let packet = build_icmp_echo_bytes(ip, ip, id, 7, b"netd").unwrap();
+        socket
+            .send_to(&packet, SocketAddr::new(ip, 0))
+            .await
+            .unwrap();
+        let matched = tokio::time::timeout(Duration::from_secs(2), &mut rx).await;
+        receiver.abort();
+        let _ = receiver.await;
+        assert!(
+            unrelated.is_err(),
+            "unrelated reply consumed the pending target"
+        );
+        matched
+            .expect("scan receiver did not recognize loopback")
+            .unwrap();
+        assert!(pending.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local ICMP socket permission and IPv4 loopback"]
+    async fn live_icmp_scan_receiver_v4() {
+        live_scan_receiver("127.0.0.1").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local ICMP socket permission and IPv6 loopback"]
+    async fn live_icmp_scan_receiver_v6() {
+        live_scan_receiver("::1").await;
+    }
 }

@@ -1,10 +1,11 @@
+use crate::events::EventEmitter;
 use anyhow::Result;
 use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -15,7 +16,7 @@ use crate::{
         },
         probe::{ProbeStatus, ProbeStatusKind},
     },
-    probe::packet::{build_icmp_echo_bytes, parse_icmp_echo_v4, parse_icmp_echo_v6},
+    probe::packet::{build_icmp_echo_bytes, matches_echo_reply},
     socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind},
 };
 
@@ -65,7 +66,7 @@ pub async fn icmp_ping(
 
     let target = SocketAddr::new(setting.ip_addr, 0);
 
-    let echo_id = fastrand::u16(1..=u16::MAX);
+    let echo_id = socket.echo_identifier(fastrand::u16(1..=u16::MAX))?;
     let payload = b"netd";
 
     let mut samples = Vec::with_capacity(setting.count as usize);
@@ -75,7 +76,7 @@ pub async fn icmp_ping(
 
     for seq in 1..=setting.count {
         if token.is_cancelled() {
-            let _ = app.emit(
+            let _ = app.emit_logged(
                 "ping:cancelled",
                 PingCancelledPayload {
                     run_id: run_id.to_string(),
@@ -96,7 +97,21 @@ pub async fn icmp_ping(
             // Wait for response (with timeout)
             let mut buf = vec![0u8; 2048];
             let to = Duration::from_millis(setting.timeout_ms);
-            match tokio::time::timeout(to, socket.recv_from(&mut buf)).await {
+            let response = tokio::select! {
+                _ = token.cancelled() => {
+                    app.emit_logged("ping:cancelled", PingCancelledPayload { run_id: run_id.to_string() })?;
+                    anyhow::bail!("cancelled");
+                }
+                response = tokio::time::timeout(to, async {
+                    loop {
+                        let (n, from) = socket.recv_from(&mut buf).await?;
+                        if matches_echo_reply(setting.ip_addr, from.ip(), &buf[..n], echo_id, seq as u16) {
+                            return Ok::<(), std::io::Error>(());
+                        }
+                    }
+                }) => response,
+            };
+            match response {
                 Err(_) => {
                     status = ProbeStatus::with_timeout_message(format!(
                         "timeout (>{}ms)",
@@ -106,18 +121,10 @@ pub async fn icmp_ping(
                 Ok(Err(e)) => {
                     status = ProbeStatus::with_error_message(format!("recv error: {e}"));
                 }
-                Ok(Ok((n, _addr))) => {
-                    let ok = match setting.ip_addr {
-                        IpAddr::V4(_) => parse_icmp_echo_v4(&buf[..n]).is_some(),
-                        IpAddr::V6(_) => parse_icmp_echo_v6(&buf[..n]).is_some(),
-                    };
-                    if ok {
-                        let rtt = sent_at.elapsed().as_millis() as u64;
-                        rtt_ms = Some(rtt);
-                        rtts_ok.push(rtt);
-                    } else {
-                        status = ProbeStatus::with_error_message("unexpected reply".to_string());
-                    }
+                Ok(Ok(())) => {
+                    let rtt = sent_at.elapsed().as_millis() as u64;
+                    rtt_ms = Some(rtt);
+                    rtts_ok.push(rtt);
                 }
             }
         }
@@ -139,7 +146,7 @@ pub async fn icmp_ping(
         let transmitted = seq;
         let percent = (seq as f32) * 100.0 / (setting.count as f32);
 
-        let _ = app.emit(
+        let _ = app.emit_logged(
             "ping:progress",
             PingProgressPayload {
                 run_id: run_id.to_string(),
@@ -156,7 +163,7 @@ pub async fn icmp_ping(
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(setting.send_rate_ms)) => {}
                 _ = token.cancelled() => {
-                    let _ = app.emit(
+                    let _ = app.emit_logged(
                         "ping:cancelled",
                         PingCancelledPayload {
                             run_id: run_id.to_string(),
@@ -190,7 +197,7 @@ pub async fn icmp_ping(
     };
 
     // Send done event
-    let _ = app.emit(
+    let _ = app.emit_logged(
         "ping:done",
         PingDonePayload {
             run_id: run_id.to_string(),
