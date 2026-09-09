@@ -1,7 +1,8 @@
+use crate::events::EventEmitter;
 use anyhow::Result;
 use reqwest::Client;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::model::ping::{
@@ -77,7 +78,7 @@ pub async fn http_ping(
 
     for seq in 1..=setting.count {
         if token.is_cancelled() {
-            let _ = app.emit(
+            let _ = app.emit_logged(
                 "ping:cancelled",
                 PingCancelledPayload {
                     run_id: run_id.to_string(),
@@ -128,7 +129,7 @@ pub async fn http_ping(
         let transmitted = seq;
         let percent = (seq as f32) * 100.0 / (setting.count as f32);
         // Send progress event
-        let _ = app.emit(
+        let _ = app.emit_logged(
             "ping:progress",
             PingProgressPayload {
                 run_id: run_id.to_string(),
@@ -145,7 +146,7 @@ pub async fn http_ping(
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(setting.send_rate_ms)) => {}
                 _ = token.cancelled() => {
-                    let _ = app.emit(
+                    let _ = app.emit_logged(
                         "ping:cancelled",
                         PingCancelledPayload {
                             run_id: run_id.to_string(),
@@ -179,7 +180,7 @@ pub async fn http_ping(
     };
 
     // Send done event
-    let _ = app.emit(
+    let _ = app.emit_logged(
         "ping:done",
         PingDonePayload {
             run_id: run_id.to_string(),

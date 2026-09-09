@@ -1,10 +1,11 @@
+use crate::events::EventEmitter;
 use anyhow::Result;
 use futures::{stream, StreamExt};
 use rand::{seq::SliceRandom, thread_rng};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::model::endpoint::Endpoint;
@@ -59,7 +60,7 @@ pub async fn port_scan(
                         let (done, should_emit) = progress.on_advance();
 
                         if should_emit {
-                            let _ = app.emit(
+                            let _ = app.emit_logged(
                                 "portscan:progress",
                                 PortScanProgressPayload {
                                     run_id: run_id.to_string(),
@@ -135,12 +136,12 @@ pub async fn port_scan(
 
                 // Open port: emit detailed info
                 if sample.state == PortState::Open {
-                    let _ = app.emit("portscan:open", sample.clone());
+                    let _ = app.emit_logged("portscan:open", sample.clone());
                 }
 
                 // Progress event
                 if should_emit {
-                    let _ = app.emit(
+                    let _ = app.emit_logged(
                         "portscan:progress",
                         PortScanProgressPayload {
                             run_id: run_id.to_string(),
@@ -183,7 +184,7 @@ pub async fn port_scan(
     }
 
     if cancelled || token.is_cancelled() {
-        let _ = app.emit(
+        let _ = app.emit_logged(
             "portscan:cancelled",
             PortScanCancelledPayload {
                 run_id: run_id.to_string(),
@@ -197,7 +198,7 @@ pub async fn port_scan(
 
     // Service detection
     if setting.service_detection && !open_samples.is_empty() && !token.is_cancelled() {
-        let _ = app.emit("portscan:service_detection_start", run_id.to_string());
+        let _ = app.emit_logged("portscan:service_detection_start", run_id.to_string());
         let service_probe_setting = ServiceProbeConfig {
             timeout: Duration::from_secs(2),
             max_concurrency: 100,
@@ -225,7 +226,7 @@ pub async fn port_scan(
         };
 
         if service_cancelled || token.is_cancelled() {
-            let _ = app.emit(
+            let _ = app.emit_logged(
                 "portscan:cancelled",
                 PortScanCancelledPayload {
                     run_id: run_id.to_string(),
@@ -245,7 +246,7 @@ pub async fn port_scan(
                     sample.service_info = Some(res.service_info.clone());
                 }
             }
-            let _ = app.emit("portscan:service_detection_done", run_id.to_string());
+            let _ = app.emit_logged("portscan:service_detection_done", run_id.to_string());
         }
     }
 
@@ -257,6 +258,6 @@ pub async fn port_scan(
         samples: open_samples,
     };
 
-    let _ = app.emit("portscan:done", report.clone());
+    let _ = app.emit_logged("portscan:done", report.clone());
     Ok(report)
 }

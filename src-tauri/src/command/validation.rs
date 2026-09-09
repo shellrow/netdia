@@ -9,12 +9,15 @@ use crate::{
 };
 
 const MAX_HOST_LENGTH: usize = 253;
-const MAX_HOST_SCAN_TARGETS: usize = 65_536;
+pub(super) const MAX_HOST_SCAN_TARGETS: usize = 65_536;
 const MAX_HOST_SCAN_CONCURRENCY: usize = 1_024;
 const MAX_PAYLOAD_LENGTH: usize = 1_400;
 const MAX_SPEEDTEST_BYTES: u64 = 104_857_600;
 
 pub fn validate_host(value: &str, field: &str) -> Result<(), String> {
+    if value.chars().any(char::is_control) {
+        return Err(format!("{field} contains control characters"));
+    }
     let value = value.trim();
     if value.is_empty() {
         return Err(format!("{field} is required"));
@@ -23,9 +26,6 @@ pub fn validate_host(value: &str, field: &str) -> Result<(), String> {
         return Err(format!(
             "{field} must be at most {MAX_HOST_LENGTH} characters"
         ));
-    }
-    if value.chars().any(char::is_control) {
-        return Err(format!("{field} contains control characters"));
     }
     Ok(())
 }
@@ -62,6 +62,9 @@ pub fn validate_ping(setting: &PingSetting) -> Result<(), String> {
     if !matches!(setting.protocol, PingProtocol::Icmp) && setting.port.is_none() {
         return Err("port is required for the selected protocol".to_string());
     }
+    if setting.port == Some(0) {
+        return Err("port must be between 1 and 65535".to_string());
+    }
     if let Some(hostname) = setting.hostname.as_deref() {
         validate_host(hostname, "hostname")?;
     }
@@ -92,6 +95,9 @@ pub fn validate_port_scan(setting: &PortScanSetting) -> Result<(), String> {
         && setting.user_ports.is_empty()
     {
         return Err("at least one custom port is required".to_string());
+    }
+    if setting.user_ports.len() > 65_535 {
+        return Err("custom port count must not exceed 65535".to_string());
     }
     if setting.user_ports.contains(&0) {
         return Err("port 0 is not a valid scan target".to_string());
@@ -190,11 +196,12 @@ mod tests {
     #[test]
     fn rejects_control_characters_in_hosts() {
         assert!(validate_host("example.com\nother", "hostname").is_err());
+        assert!(validate_host("example.com\n", "hostname").is_err());
     }
 
     #[test]
     fn rejects_ping_without_required_port() {
-        let setting = PingSetting {
+        let mut setting = PingSetting {
             ip_addr: ip(),
             hostname: None,
             port: None,
@@ -205,6 +212,10 @@ mod tests {
             send_rate_ms: 1_000,
         };
         assert!(validate_ping(&setting).is_err());
+        setting.port = Some(0);
+        assert!(validate_ping(&setting).is_err());
+        setting.port = Some(443);
+        assert!(validate_ping(&setting).is_ok());
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use crate::events::EventEmitter;
 use crate::model::trace::{TraceCancelledPayload, TracerouteSetting};
 use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
 use crate::socket::udp::{AsyncUdpSocket, UdpConfig};
@@ -13,7 +14,7 @@ use nex_packet::ipv4::Ipv4Packet;
 use nex_packet::packet::Packet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
 /// Default base target UDP port for traceroute
@@ -63,7 +64,7 @@ pub async fn udp_traceroute(
         use crate::model::trace::TraceHop;
 
         if token.is_cancelled() {
-            let _ = app.emit(
+            let _ = app.emit_logged(
                 "traceroute:cancelled",
                 TraceCancelledPayload {
                     run_id: run_id.to_string(),
@@ -142,7 +143,7 @@ pub async fn udp_traceroute(
                     if is_dest {
                         best.reached = true;
                         reached = true;
-                        app.emit("traceroute:progress", &best).ok();
+                        app.emit_logged("traceroute:progress", &best).ok();
                         break 'ttl_loop;
                     }
                 }
@@ -153,10 +154,10 @@ pub async fn udp_traceroute(
             best.note = Some("timeout".into());
         }
 
-        app.emit("traceroute:progress", &best).ok();
+        app.emit_logged("traceroute:progress", &best).ok();
 
         if token.is_cancelled() {
-            let _ = app.emit(
+            let _ = app.emit_logged(
                 "traceroute:cancelled",
                 TraceCancelledPayload {
                     run_id: run_id.to_string(),

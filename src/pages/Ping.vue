@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { useDiagnosticRun } from "../composables/useDiagnosticRun";
+import { ref, reactive, computed, onMounted, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { useDiagnosticListeners } from "../composables/useDiagnosticListeners";
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import { PingProtocol, PingSample, PingStat, PingSetting } from "../types/probe";
@@ -21,6 +22,7 @@ const form = reactive({
 
 const running = ref(false);
 const opId = ref<string | null>(null);
+const run = useDiagnosticRun("ping", opId);
 const canceling = ref(false);
 const err = ref<string | null>(null);
 
@@ -58,92 +60,110 @@ async function toPingSetting(): Promise<PingSetting> {
   };
 }
 
+let preparing = false;
+let preparationCanceled = false;
+
 async function startPing() {
+  if (preparing) return;
+  if (!listenersReady.value) {
+    err.value = "Diagnostics are not ready. Reopen this page if initialization failed.";
+    return;
+  }
   if (running.value || !form.host.trim()) return;
   resetResult();
   canceling.value = false;
   running.value = true;
 
+  let runId: string | undefined;
   try {
+    preparing = true;
+    preparationCanceled = false;
+    runId = await run.begin();
     const setting = await toPingSetting();
-    await invoke("ping", { setting });
+    preparing = false;
+    if (preparationCanceled || !listenersReady.value) return;
+    await invoke("ping", { setting, runId });
   } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    if (runId && !run.isLatest(runId)) return;
+    await run.cancel(runId).catch((error) => console.error("Failed to release diagnostic", error));
+    if (!preparationCanceled) err.value = String(e?.message ?? e);
     running.value = false;
+  } finally {
+    if (runId && !run.isLatest(runId)) return;
+    preparing = false;
   }
 }
 
 async function cancelPing() {
-  if (!running.value) return;
+  preparationCanceled = true;
   canceling.value = true;
   try {
-    await invoke('cancel_ping');
-  } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    await run.cancel();
+  } catch (error) {
+    err.value = String(error);
+  } finally {
+    running.value = false;
     canceling.value = false;
   }
 }
 
-let unlistenStart: UnlistenFn | null = null;
-let unlistenProgress: UnlistenFn | null = null;
-let unlistenDone: UnlistenFn | null = null;
-let unlistenError: UnlistenFn | null = null;
-let unlistenCancelled: UnlistenFn | null = null;
+const { listen, dispose, listenersReady } = useDiagnosticListeners();
 
 onMounted(async () => {
-  await nextTick();
+  try {
+    await nextTick();
 
-  // Ping started
-  unlistenStart = await listen("ping:start", (ev: any) => {
-    const p = ev?.payload ?? {};
-    opId.value = p.run_id ?? null;
-  });
+    // Ping started
+    await listen("ping:start", (ev: any) => {
+      const p = ev?.payload ?? {};
+      if (!run.accepts(p.run_id)) return;
+    });
 
-  // Progress samples
-  unlistenProgress = await listen("ping:progress", (ev: any) => {
-    const p = ev?.payload ?? {};
-    if (opId.value && p.run_id && p.run_id !== opId.value) return;
+    // Progress samples
+    await listen("ping:progress", (ev: any) => {
+      const p = ev?.payload ?? {};
+      if (!run.accepts(p.run_id)) return;
 
-    const sample: PingSample | undefined = p.sample ?? ev?.payload;
-    if (!sample) return;
-    samples.value = [...samples.value, sample];
-  });
+      const sample: PingSample | undefined = p.sample ?? ev?.payload;
+      if (!sample) return;
+      samples.value = [...samples.value, sample];
+    });
 
-  // Done (final stats)
-  unlistenDone = await listen("ping:done", (ev: any) => {
-    const p = ev?.payload ?? {};
-    if (opId.value && p.run_id && p.run_id !== opId.value) return;
+    // Done (final stats)
+    await listen("ping:done", (ev: any) => {
+      const p = ev?.payload ?? {};
+      if (!run.accepts(p.run_id)) return;
 
-    const s: PingStat | undefined = p.stat ?? ev?.payload;
-    if (s) stat.value = s;
-    running.value = false;
-    canceling.value = false;
-  });
-
-  unlistenError = await listen("ping:error", (ev:any) => {
-    const p = ev?.payload ?? {};
-    if (opId.value && p.run_id !== opId.value) return;
-    if (p.message) {
-      err.value = String(p.message);
-    }
-    running.value = false;
-    canceling.value = false;
-  });
-
-  unlistenCancelled = await listen("ping:cancelled", (ev: any) => {
-    if (ev.payload?.run_id === opId.value) {
+      const s: PingStat | undefined = p.stat ?? ev?.payload;
+      if (s) stat.value = s;
       running.value = false;
       canceling.value = false;
-    }
-  });
-});
+      run.finish();
+    });
 
-onBeforeUnmount(() => {
-  unlistenStart?.();
-  unlistenProgress?.();
-  unlistenDone?.();
-  unlistenError?.();
-  unlistenCancelled?.();
+    await listen("ping:error", (ev:any) => {
+      const p = ev?.payload ?? {};
+      if (!run.accepts(p.run_id)) return;
+      if (p.message) {
+        err.value = String(p.message);
+      }
+      running.value = false;
+      canceling.value = false;
+      run.finish();
+    });
+
+    await listen("ping:cancelled", (ev: any) => {
+      if (run.accepts(ev.payload?.run_id)) {
+        run.finish();
+        running.value = false;
+        canceling.value = false;
+      }
+    });
+    listenersReady.value = true;
+  } catch (error) {
+    dispose();
+    err.value = `Could not initialize diagnostics: ${String(error)}. Reopen this page to retry.`;
+  }
 });
 
 const sentCount = computed(() => samples.value.length);

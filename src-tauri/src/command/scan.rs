@@ -1,7 +1,8 @@
+use crate::events::EventEmitter;
 use std::net::IpAddr;
 
 use netdev::Interface;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::model::scan::{
     HostScanReport, HostScanRequest, HostScanSetting, HostScanTargetPreview, PortInputPreview,
@@ -17,6 +18,8 @@ use crate::probe::service::db::tls::{init_tls_oid_map, TLS_OID_MAP};
 
 #[tauri::command]
 pub async fn init_probe_db() -> Result<(), String> {
+    static INIT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _initialization = INIT.lock().await;
     // Initialize service databases if not already initialized
 
     if TCP_SERVICE_DB.get().is_none() {
@@ -43,8 +46,15 @@ pub async fn init_probe_db() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn port_scan(app: AppHandle, setting: PortScanSetting) -> Result<PortScanReport, String> {
+pub async fn port_scan(
+    app: AppHandle,
+    run_id: String,
+    setting: PortScanSetting,
+) -> Result<PortScanReport, String> {
+    let operation = crate::operation::claim_op(OP_PORTSCAN, &run_id)?;
+    let token = operation.token.clone();
     super::validation::validate_port_scan(&setting)?;
+    init_probe_db().await?;
     let default_interface: Interface = netdev::get_default_interface()
         .map_err(|e| format!("Failed to get default interface: {}", e))?;
     let src_ip = match setting.ip_addr {
@@ -67,10 +77,9 @@ pub async fn port_scan(app: AppHandle, setting: PortScanSetting) -> Result<PortS
             IpAddr::V6(ipv6)
         }
     };
-    let run_id = uuid::Uuid::new_v4().to_string();
-    let token = crate::operation::start_op(OP_PORTSCAN);
+
     // Start event
-    let _ = app.emit(
+    let _ = app.emit_logged(
         "portscan:start",
         crate::model::scan::PortScanStartPayload {
             run_id: run_id.clone(),
@@ -92,15 +101,20 @@ pub async fn port_scan(app: AppHandle, setting: PortScanSetting) -> Result<PortS
 }
 
 #[tauri::command]
-pub async fn cancel_portscan() -> bool {
-    crate::operation::cancel_op(OP_PORTSCAN)
+pub async fn cancel_portscan(run_id: String) -> bool {
+    crate::operation::cancel_op(OP_PORTSCAN, &run_id).await
 }
 
 #[tauri::command]
-pub async fn host_scan(app: AppHandle, setting: HostScanRequest) -> Result<HostScanReport, String> {
+pub async fn host_scan(
+    app: AppHandle,
+    run_id: String,
+    setting: HostScanRequest,
+) -> Result<HostScanReport, String> {
+    let operation = crate::operation::claim_op(OP_HOSTSCAN, &run_id)?;
+    let token = operation.token.clone();
     super::validation::validate_host_scan(&setting)?;
     let scan_setting: HostScanSetting = HostScanSetting::from_request(setting);
-    let run_id = uuid::Uuid::new_v4().to_string();
 
     let default_if = netdev::get_default_interface().map_err(|e| e.to_string())?;
 
@@ -115,9 +129,7 @@ pub async fn host_scan(app: AppHandle, setting: HostScanRequest) -> Result<HostS
         .next()
         .map(std::net::IpAddr::V6);
 
-    let token = crate::operation::start_op(OP_HOSTSCAN);
-
-    let _ = app.emit(
+    let _ = app.emit_logged(
         "hostscan:start",
         crate::model::scan::HostScanStartPayload {
             run_id: run_id.clone(),
@@ -136,14 +148,18 @@ pub async fn host_scan(app: AppHandle, setting: HostScanRequest) -> Result<HostS
 }
 
 #[tauri::command]
-pub async fn cancel_hostscan() -> bool {
-    crate::operation::cancel_op(OP_HOSTSCAN)
+pub async fn cancel_hostscan(run_id: String) -> bool {
+    crate::operation::cancel_op(OP_HOSTSCAN, &run_id).await
 }
 
 #[tauri::command]
-pub async fn neighbor_scan(app: AppHandle, iface_name: Option<String>) -> Result<(), String> {
-    let run_id = uuid::Uuid::new_v4().to_string();
-    let token = crate::operation::start_op(OP_NEIGHBORSCAN);
+pub async fn neighbor_scan(
+    app: AppHandle,
+    run_id: String,
+    iface_name: Option<String>,
+) -> Result<(), String> {
+    let operation = crate::operation::claim_op(OP_NEIGHBORSCAN, &run_id)?;
+    let token = operation.token.clone();
 
     let iface = if let Some(name) = iface_name {
         netdev::get_interfaces()
@@ -161,8 +177,8 @@ pub async fn neighbor_scan(app: AppHandle, iface_name: Option<String>) -> Result
 }
 
 #[tauri::command]
-pub async fn cancel_neighborscan() -> bool {
-    crate::operation::cancel_op(OP_NEIGHBORSCAN)
+pub async fn cancel_neighborscan(run_id: String) -> bool {
+    crate::operation::cancel_op(OP_NEIGHBORSCAN, &run_id).await
 }
 
 #[tauri::command]
@@ -172,42 +188,37 @@ pub async fn get_target_ports(preset: String, user_ports: Vec<u16>) -> Vec<u16> 
 }
 
 fn parse_user_ports(text: &str) -> Vec<u16> {
-    let mut out = Vec::new();
-
+    let mut ranges = Vec::new();
     for part in text
         .split(|c: char| c == ',' || c.is_whitespace())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .filter(|part| !part.is_empty())
     {
-        if let Ok(port) = part.parse::<u16>() {
-            if (1..=65535).contains(&port) {
-                out.push(port);
-            }
+        let range = if let Ok(port) = part.parse::<u16>() {
+            (port, port)
+        } else if let Some((lhs, rhs)) = part.split_once('-') {
+            let (Ok(start), Ok(end)) = (lhs.parse::<u16>(), rhs.parse::<u16>()) else {
+                continue;
+            };
+            (start.min(end), start.max(end))
+        } else {
             continue;
-        }
-
-        if let Some((lhs, rhs)) = part.split_once('-') {
-            let Ok(mut start) = lhs.trim().parse::<u16>() else {
-                continue;
-            };
-            let Ok(mut end) = rhs.trim().parse::<u16>() else {
-                continue;
-            };
-
-            if start > end {
-                std::mem::swap(&mut start, &mut end);
-            }
-
-            for port in start..=end {
-                if (1..=65535).contains(&port) {
-                    out.push(port);
-                }
-            }
+        };
+        if range.1 != 0 {
+            ranges.push((range.0.max(1), range.1));
         }
     }
-
-    out.sort_unstable();
-    out.dedup();
+    ranges.sort_unstable();
+    let mut out = Vec::new();
+    let mut next = 1u32;
+    // Expand only the unseen suffix of each range, never repeated overlaps.
+    for (start, end) in ranges {
+        let start = u32::from(start).max(next);
+        let end = u32::from(end);
+        if start <= end {
+            out.extend((start..=end).map(|port| port as u16));
+            next = end + 1;
+        }
+    }
     out
 }
 
@@ -264,6 +275,7 @@ pub async fn preview_host_scan_targets(
     list: String,
     max_expand: usize,
 ) -> HostScanTargetPreview {
+    let max_expand = max_expand.min(super::validation::MAX_HOST_SCAN_TARGETS);
     match mode.as_str() {
         "cidr" => {
             let estimated_count = estimate_ipv4_hosts(&cidr).unwrap_or(0);
@@ -282,10 +294,12 @@ pub async fn preview_host_scan_targets(
         }
         _ => {
             let targets = parse_target_list(&list);
+            let estimated_count = targets.len();
+            let exceeds_limit = estimated_count > max_expand;
             HostScanTargetPreview {
-                estimated_count: targets.len(),
-                exceeds_limit: false,
-                targets,
+                estimated_count,
+                exceeds_limit,
+                targets: if exceeds_limit { Vec::new() } else { targets },
             }
         }
     }
@@ -295,12 +309,43 @@ pub async fn preview_host_scan_targets(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn probe_initialization_is_repeatable_and_concurrent() {
+        let (first, second) = tokio::join!(init_probe_db(), init_probe_db());
+        first.unwrap();
+        second.unwrap();
+        assert!(!crate::probe::service::db::service::port_probe_db().is_empty());
+        assert!(!crate::probe::service::db::service::service_probe_db().is_empty());
+    }
+
     #[test]
     fn parses_ports_ranges_and_removes_duplicates() {
         assert_eq!(
             parse_user_ports("443, 80, 82-80, 443, invalid"),
             vec![80, 81, 82, 443]
         );
+    }
+
+    #[tokio::test]
+    async fn preview_enforces_server_limit() {
+        let preview =
+            preview_host_scan_targets("cidr".into(), "0.0.0.0/0".into(), String::new(), usize::MAX)
+                .await;
+        assert!(preview.exceeds_limit);
+        assert!(preview.targets.is_empty());
+        let preview =
+            preview_host_scan_targets("list".into(), String::new(), "a,b,c".into(), 2).await;
+        assert!(preview.exceeds_limit);
+        assert_eq!(preview.estimated_count, 3);
+        assert!(preview.targets.is_empty());
+    }
+
+    #[test]
+    fn repeated_full_port_ranges_are_deduplicated() {
+        let ports = parse_user_ports("1-65535,1-65535");
+        assert_eq!(ports.len(), 65535);
+        assert_eq!(ports[0], 1);
+        assert_eq!(ports[65534], 65535);
     }
 
     #[test]
