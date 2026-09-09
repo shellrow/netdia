@@ -2,6 +2,7 @@ mod app;
 mod command;
 mod config;
 mod db;
+mod events;
 mod fs;
 mod log;
 mod model;
