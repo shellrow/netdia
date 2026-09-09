@@ -770,9 +770,8 @@ watch(
         <Button
           text
           :icon="publicIpVisible ? 'pi pi-eye' : 'pi pi-eye-slash'"
-          :label="publicIpVisible ? 'Privacy visible' : 'Privacy hidden'"
           @click="togglePrivacy"
-          class="nd-action-button"
+          class="icon-btn"
           severity="secondary"
           title="Toggle privacy filters"
           aria-label="Toggle privacy filters"
@@ -780,9 +779,8 @@ watch(
         <Button
           text
           :icon="autoInternetCheck ? 'pi pi-globe' : 'pi pi-times-circle'"
-          :label="autoInternetCheck ? 'Auto check on' : 'Auto check off'"
           @click="toggleAutoInternetCheck"
-          class="nd-action-button"
+          class="icon-btn"
           severity="secondary"
           :title="autoInternetCheck ? 'Auto Internet Check: ON' : 'Auto Internet Check: OFF'"
           aria-label="Toggle automatic internet checks"
@@ -790,10 +788,9 @@ watch(
         <Button
           outlined
           icon="pi pi-refresh"
-          label="Refresh"
           :loading="loading"
           @click="fetchAll(); refreshIpInfo(true)"
-          class="nd-action-button"
+          class="icon-btn"
           severity="secondary"
           title="Refresh data manually"
           aria-label="Refresh dashboard data"
@@ -808,7 +805,7 @@ watch(
         class="flex-1 min-h-0"
       >
         <div
-          class="grid grid-cols-1 xl:grid-cols-2 gap-3 content-start auto-rows-max p-1 items-stretch"
+          class="grid grid-cols-1 xl:grid-cols-2 gap-3 content-start auto-rows-max py-1 items-stretch"
         >
           <!-- Network Path -->
           <Card class="xl:col-span-2 nd-path-card">

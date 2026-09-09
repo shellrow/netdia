@@ -82,7 +82,7 @@ const { wrapRef, toolbarRef, panelHeight } = useScrollPanelHeight();
     <div class="flex-1 min-h-0">
     <!-- Scrollable content -->
     <ScrollPanel :style="{ width: '100%', height: panelHeight }" class="flex-1 min-h-0">
-      <div class="grid grid-cols-1 xl:grid-cols-2 gap-2 content-start auto-rows-max p-3">
+      <div class="grid grid-cols-1 xl:grid-cols-2 gap-2 content-start auto-rows-max py-3">
         <!-- Summary -->
         <Card>
           <template #title>Summary</template>

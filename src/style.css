@@ -137,9 +137,9 @@ body {
 }
 
 .nd-page-toolbar {
-  border: 1px solid var(--nd-border);
+  border: 1px solid var(--p-content-border-color);
   border-radius: var(--nd-radius);
-  background: color-mix(in srgb, var(--nd-surface) 94%, var(--p-primary-50));
+  background: var(--p-card-background);
   padding: 0.7rem 0.8rem;
 }
 
