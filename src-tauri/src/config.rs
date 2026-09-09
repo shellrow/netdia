@@ -32,6 +32,7 @@ pub struct AppConfig {
     /// Auto internet check interval in seconds
     pub auto_internet_check_interval_s: u64,
     /// Check for app updates automatically on startup.
+    #[serde(default = "default_auto_update_check")]
     pub auto_update_check: bool,
 }
 
@@ -129,5 +130,29 @@ impl LoggingConfig {
             file_path: crate::fs::get_user_file_path(DEFAULT_LOG_FILE_NAME)
                 .map(|path| path.to_string_lossy().to_string()),
         }
+    }
+}
+
+fn default_auto_update_check() -> bool {
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_config_preserves_settings_without_update_field() {
+        let mut value = serde_json::to_value(AppConfig {
+            theme: "light".into(),
+            refresh_interval_ms: 2000,
+            ..AppConfig::default()
+        })
+        .unwrap();
+        value.as_object_mut().unwrap().remove("auto_update_check");
+        let restored: AppConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.theme, "light");
+        assert_eq!(restored.refresh_interval_ms, 2000);
+        assert!(restored.auto_update_check);
     }
 }

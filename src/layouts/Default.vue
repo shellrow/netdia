@@ -7,8 +7,10 @@ import { useUiPreferences } from "../composables/useUiPreferences";
 import { useNotifications } from "../composables/useNotifications";
 import NotificationDrawer from "../components/NotificationDrawer.vue";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { useStartupStatus } from "../composables/useStartupStatus";
 import { useAppStatus } from "../composables/useAppStatus";
 
+const { startupError, dataDirectory, restarting, retryError, retryStartup } = useStartupStatus();
 const { currentLogoFile } = useTheme();
 const { sidebarCompact, patchUiPreferences } = useUiPreferences();
 const { unreadCount, loadNotifications, markAllNotificationsRead } = useNotifications();
@@ -23,7 +25,7 @@ watch(sidebarCompact, (value) => {
   }
 });
 watch(isCompact, (value) => {
-  if (value !== sidebarCompact.value) {
+  if (!startupError.value && value !== sidebarCompact.value) {
     void patchUiPreferences({ sidebar_compact: value });
   }
 });
@@ -82,26 +84,6 @@ const getMenuNameByRoute = (routeName: RouteRecordName | null | undefined): stri
 };
 
 const currentMenuTitle = computed(() => getMenuNameByRoute(route.name));
-const PAGE_DESCRIPTIONS: Record<string, string> = {
-  dashboard: "Inspect network path, interface status, and live traffic.",
-  interfaces: "Review local adapters, addresses, and link performance.",
-  monitor: "Compare real-time receive and transmit activity by interface.",
-  neighbor: "Discover reachable devices on a local network you are authorized to inspect.",
-  routes: "Inspect active IPv4 and IPv6 routing decisions.",
-  socket: "Review listening and connected local sockets.",
-  internet: "Check public addressing, reachability, latency, and throughput.",
-  dns: "Resolve the records published for a domain name.",
-  ping: "Measure reachability, latency, and packet loss to a target.",
-  traceroute: "Follow the network path and latency to each hop.",
-  portscan: "Identify reachable services. Scan only systems you are authorized to test.",
-  hostscan: "Discover reachable hosts. Scan only networks you are authorized to test.",
-  os: "Review operating system, kernel, architecture, and proxy details.",
-  settings: "Configure behavior, appearance, updates, and diagnostics.",
-};
-const currentPageDescription = computed(() => {
-  const routeName = typeof route.name === "string" ? route.name : "";
-  return PAGE_DESCRIPTIONS[routeName] ?? "";
-});
 const unreadBadgeText = computed(() => (unreadCount.value > 9 ? "9+" : `${unreadCount.value}`));
 
 watch(
@@ -245,9 +227,6 @@ onMounted(async () => {
           </button>
           <div class="min-w-0">
             <h1 class="text-base font-semibold leading-tight text-surface-950 dark:text-surface-0">{{ currentMenuTitle }}</h1>
-            <p v-if="currentPageDescription" class="mt-1 hidden truncate text-xs text-surface-500 sm:block">
-              {{ currentPageDescription }}
-            </p>
           </div>
         </div>
         <!-- Actions -->
@@ -261,6 +240,7 @@ onMounted(async () => {
               severity="secondary"
               class="icon-btn"
               aria-label="Notifications"
+              :disabled="!!startupError"
               @click="notificationsVisible = true"
             />
             <span
@@ -293,11 +273,25 @@ onMounted(async () => {
           @click="clearAppError"
         />
       </div>
+      <div
+        v-if="startupError"
+        role="alert"
+        class="mx-3 mt-3 lg:mx-5 shrink-0 rounded-xl border border-red-300 bg-red-50 p-3 text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"
+      >
+        <p class="font-semibold">Saved data is unavailable</p>
+        <p class="mt-1 text-sm">Diagnostics remain available. Saving settings and preferences is disabled until startup succeeds.</p>
+        <p class="mt-1 break-words text-xs">{{ startupError }}</p>
+        <p v-if="dataDirectory" class="mt-1 break-words text-xs">Data folder: {{ dataDirectory }}</p>
+        <p class="mt-1 text-xs">Close other NetDia instances and retry. If the error persists, quit NetDia and back up the entire data folder before restoring a compatible backup or using a newer version. No database reset is performed.</p>
+        <Button class="mt-2" label="Restart and retry" :loading="restarting" @click="retryStartup" />
+        <p v-if="retryError" class="mt-1 text-xs">{{ retryError }}</p>
+      </div>
       <!-- Content -->
       <main
         id="main-content"
         tabindex="-1"
-        class="px-0 pt-0 pb-0 flex flex-col flex-auto min-h-0 overflow-hidden"
+        class="px-0 pt-0 pb-0 flex flex-col flex-auto min-h-0"
+        :class="startupError ? 'overflow-y-auto' : 'overflow-hidden'"
       >
         <router-view />
       </main>

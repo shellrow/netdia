@@ -43,19 +43,40 @@ fn tray_icon_bytes(dark: bool) -> &'static [u8] {
 }
 
 pub fn run() {
-    let db_state =
-        block_on(DatabaseState::initialize()).expect("failed to initialize local database");
-    let app_conf =
-        block_on(db_state.load_app_config()).expect("failed to load app config from database");
+    let loaded = block_on(async {
+        let db = DatabaseState::initialize().await?;
+        let config = db.load_app_config().await?;
+        command::validation::validate_config(&config).map_err(anyhow::Error::msg)?;
+        Ok::<_, anyhow::Error>((db, config))
+    });
+    let (db_state, app_conf) = match loaded {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            let detail = format!("{error:#}");
+            eprintln!("NetDia could not load saved data: {detail}");
+            // Keep diagnostics available, but never write defaults over failed storage.
+            (
+                DatabaseState::unavailable(detail),
+                crate::config::AppConfig {
+                    auto_update_check: false,
+                    auto_internet_check: false,
+                    ..crate::config::AppConfig::default()
+                },
+            )
+        }
+    };
+    let storage_available = db_state.startup_error().is_none();
     let startup = app_conf.startup;
     let background = app_conf.background;
-    let _ = crate::log::init_logger(&app_conf);
+    if let Err(error) = crate::log::init_logger(&app_conf) {
+        eprintln!("NetDia could not initialize logging: {error}");
+    }
 
     let conf_state = ConfigState(tokio::sync::RwLock::new(app_conf));
 
     let shared_app_state = Arc::new(AppState::default());
 
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         // Plugins
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -141,14 +162,15 @@ pub fn run() {
 
             #[cfg(desktop)]
             {
-                let _ = app
-                    .handle()
-                    .plugin(autostart_init(MacosLauncher::LaunchAgent, None));
+                app.handle()
+                    .plugin(autostart_init(MacosLauncher::LaunchAgent, None))?;
 
                 // Get the autostart manager
                 let autostart_manager = app.autolaunch();
 
-                let update_result = if startup {
+                let update_result = if !storage_available {
+                    Ok(())
+                } else if startup {
                     autostart_manager.enable()
                 } else {
                     autostart_manager.disable()
@@ -187,6 +209,10 @@ pub fn run() {
         // Register commands
         .invoke_handler(tauri::generate_handler![
             command::about,
+            command::startup::get_startup_status,
+            command::startup::retry_startup,
+            crate::operation::prepare_operation,
+            crate::operation::cancel_operation,
             command::interfaces::get_network_interfaces,
             command::interfaces::reload_interfaces,
             command::interfaces::get_default_network_interface,
@@ -232,6 +258,10 @@ pub fn run() {
             command::updater::check_update,
             command::updater::install_update,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running netdia application");
+        .run(tauri::generate_context!());
+    if let Err(error) = result {
+        tracing::error!(%error, "native application runtime failed");
+        eprintln!("NetDia could not run its native application: {error}");
+        std::process::exit(1);
+    }
 }

@@ -12,6 +12,7 @@ import {
   loadUiPreferences,
   migrateLegacyUiPreferences,
 } from "./composables/useUiPreferences";
+import { loadStartupStatus, useStartupStatus } from "./composables/useStartupStatus";
 import { reportAppError } from "./composables/useAppStatus";
 
 // Components
@@ -78,9 +79,12 @@ const ThemePreset = definePreset(Aura, {
 
 async function bootstrap() {
   try {
+    await loadStartupStatus();
     await loadAppConfig();
-    await loadUiPreferences();
-    await migrateLegacyUiPreferences();
+    if (!useStartupStatus().startupError.value) {
+      await loadUiPreferences();
+      await migrateLegacyUiPreferences();
+    }
   } catch (e) {
     reportAppError(e, "Failed to load saved settings");
   }
@@ -126,7 +130,7 @@ async function bootstrap() {
 
   app.directive('tooltip', Tooltip);
   app.mount('#app');
-  void initializeNotificationsOnStartup();
+  if (!useStartupStatus().startupError.value) void initializeNotificationsOnStartup();
 }
 
 window.addEventListener("unhandledrejection", (event) => {

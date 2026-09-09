@@ -9,11 +9,12 @@ pub mod routes;
 pub mod scan;
 pub mod socket;
 pub mod speedtest;
+pub mod startup;
 pub mod system;
 pub mod trace;
 pub mod ui_preferences;
 pub mod updater;
-mod validation;
+pub(crate) mod validation;
 
 use crate::model::AppInfo;
 
