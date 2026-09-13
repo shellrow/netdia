@@ -17,11 +17,8 @@ use tokio::{
 
 /// Build a DNS query message for "version.bind" TXT record in CHAOS class.
 fn build_version_bind_query() -> anyhow::Result<Vec<u8>> {
-    let mut msg = Message::new();
-    msg.set_id(fastrand::u16(..));
-    msg.set_message_type(MessageType::Query);
-    msg.set_op_code(OpCode::Query);
-    msg.set_recursion_desired(false);
+    let mut msg = Message::new(fastrand::u16(..), MessageType::Query, OpCode::Query);
+    msg.metadata.recursion_desired = false;
 
     let name = Name::from_ascii("version.bind.")?;
     let mut q = Query::query(name, RecordType::TXT);
@@ -58,18 +55,18 @@ async fn run_dns_version_bind_udp(
     buf.truncate(n);
 
     let msg = Message::from_vec(&buf)?;
-    let truncated = msg.truncated();
+    let truncated = msg.metadata.truncation;
 
     // Extract TXT record
     let mut txt = String::new();
-    for ans in msg.answers() {
-        if ans.record_type() == RecordType::TXT
-            && ans.name().to_ascii().eq_ignore_ascii_case("version.bind.")
-            && ans.dns_class() == DNSClass::CH
+    for ans in &msg.answers {
+        if ans.data.record_type() == RecordType::TXT
+            && ans.name.to_ascii().eq_ignore_ascii_case("version.bind.")
+            && ans.dns_class == DNSClass::CH
         {
-            if let hickory_proto::rr::RData::TXT(t) = ans.data() {
+            if let hickory_proto::rr::RData::TXT(t) = &ans.data {
                 let joined = t
-                    .txt_data()
+                    .txt_data
                     .iter()
                     .map(|b| String::from_utf8_lossy(b).to_string())
                     .collect::<Vec<_>>()
@@ -115,14 +112,14 @@ async fn run_dns_version_bind_tcp(
 
     let msg = hickory_proto::op::Message::from_vec(&buf)?;
     // Extract TXT record
-    for ans in msg.answers() {
-        if ans.record_type() == RecordType::TXT
-            && ans.name().to_ascii().eq_ignore_ascii_case("version.bind.")
-            && ans.dns_class() == DNSClass::CH
+    for ans in &msg.answers {
+        if ans.data.record_type() == RecordType::TXT
+            && ans.name.to_ascii().eq_ignore_ascii_case("version.bind.")
+            && ans.dns_class == DNSClass::CH
         {
-            if let hickory_proto::rr::RData::TXT(t) = ans.data() {
+            if let hickory_proto::rr::RData::TXT(t) = &ans.data {
                 let joined = t
-                    .txt_data()
+                    .txt_data
                     .iter()
                     .map(|b| String::from_utf8_lossy(b).to_string())
                     .collect::<Vec<_>>()
@@ -242,5 +239,119 @@ impl DnsProbe {
             return Ok(probe_result);
         }
         anyhow::bail!("unsupported probe for dns version.bind")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hickory_proto::rr::{rdata::TXT, RData, Record};
+    use std::time::Duration;
+    use tokio::net::TcpListener;
+
+    const TIMEOUT: Duration = Duration::from_secs(2);
+
+    fn response(query: &[u8], truncated: bool, valid_answer: bool) -> Vec<u8> {
+        let query = Message::from_vec(query).unwrap();
+        assert_eq!(query.metadata.message_type, MessageType::Query);
+        assert!(!query.metadata.recursion_desired);
+        assert_eq!(query.queries.len(), 1);
+        assert_eq!(query.queries[0].name().to_ascii(), "version.bind.");
+        assert_eq!(query.queries[0].query_type(), RecordType::TXT);
+        assert_eq!(query.queries[0].query_class(), DNSClass::CH);
+        let mut message = Message::response(query.metadata.id, OpCode::Query);
+        message.metadata.truncation = truncated;
+        message.add_queries(query.queries);
+        let mut record = Record::from_rdata(
+            Name::from_ascii("VERSION.BIND.").unwrap(),
+            0,
+            RData::TXT(TXT::new(vec!["Test DNS ".into(), "1.0".into()])),
+        );
+        // An IN-class record must never be mistaken for the CHAOS-class banner.
+        message.add_answer(record.clone());
+        if valid_answer {
+            record.dns_class = DNSClass::CH;
+            message.add_answer(record);
+        }
+        message.to_vec().unwrap()
+    }
+
+    #[tokio::test]
+    async fn udp_probe_preserves_txt_segments_and_truncation_flag() {
+        for truncated in [false, true] {
+            let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let addr = socket.local_addr().unwrap();
+            let server = async {
+                let mut buf = [0; 512];
+                let (n, peer) = socket.recv_from(&mut buf).await.unwrap();
+                socket
+                    .send_to(&response(&buf[..n], truncated, true), peer)
+                    .await
+                    .unwrap();
+            };
+            let client = run_dns_version_bind_udp(addr, TIMEOUT, TIMEOUT, 4096);
+            let (_, result) = tokio::time::timeout(TIMEOUT, async { tokio::join!(server, client) })
+                .await
+                .unwrap();
+            assert_eq!(result.unwrap(), ("Test DNS 1.0".into(), truncated));
+        }
+    }
+
+    #[tokio::test]
+    async fn udp_probe_rejects_wrong_class_and_malformed_responses() {
+        for malformed in [false, true] {
+            let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let addr = socket.local_addr().unwrap();
+            let server = async {
+                let mut buf = [0; 512];
+                let (n, peer) = socket.recv_from(&mut buf).await.unwrap();
+                let bytes = if malformed {
+                    vec![0, 1, 2]
+                } else {
+                    response(&buf[..n], false, false)
+                };
+                socket.send_to(&bytes, peer).await.unwrap();
+            };
+            let client = run_dns_version_bind_udp(addr, TIMEOUT, TIMEOUT, 4096);
+            let (_, result) = tokio::time::timeout(TIMEOUT, async { tokio::join!(server, client) })
+                .await
+                .unwrap();
+            assert!(result.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_probe_handles_fragmented_frames_and_enforces_size_limit() {
+        for oversized in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = async {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let len = stream.read_u16().await.unwrap() as usize;
+                let mut query = vec![0; len];
+                stream.read_exact(&mut query).await.unwrap();
+                let bytes = response(&query, false, true);
+                let size = if oversized { 4097 } else { bytes.len() as u16 };
+                stream.write_u16(size).await.unwrap();
+                if !oversized {
+                    for chunk in bytes.chunks(3) {
+                        stream.write_all(chunk).await.unwrap();
+                        tokio::task::yield_now().await;
+                    }
+                }
+            };
+            let client = run_dns_version_bind_tcp(addr, TIMEOUT, TIMEOUT, 4096);
+            let (_, result) = tokio::time::timeout(TIMEOUT, async { tokio::join!(server, client) })
+                .await
+                .unwrap();
+            if oversized {
+                assert!(result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("exceeds max_bytes"));
+            } else {
+                assert_eq!(result.unwrap(), "Test DNS 1.0");
+            }
+        }
     }
 }

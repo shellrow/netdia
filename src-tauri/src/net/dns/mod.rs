@@ -1,5 +1,6 @@
+mod pool;
 pub mod resolver;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::{stream, StreamExt};
 use std::{collections::HashSet, net::IpAddr, time::Duration};
 
@@ -18,7 +19,9 @@ pub async fn lookup_host(host: &str, timeout: Duration) -> Result<Host> {
         })
     } else {
         // Resolve hostname to IP address
-        let ips = lookup_ip(host, timeout).await.unwrap_or_default();
+        let ips = resolve_ip(host, timeout)
+            .await
+            .with_context(|| format!("failed to resolve host {host}"))?;
         match ips.first() {
             Some(ip) => Ok(Host {
                 hostname: Some(host.to_string()),
@@ -40,18 +43,45 @@ pub async fn lookup_domain(hostname: &str, timeout: Duration) -> Domain {
 
 /// Perform a DNS lookup for the given hostname with a timeout.
 pub async fn lookup_ip(hostname: &str, timeout: Duration) -> Option<Vec<IpAddr>> {
-    let resolver = resolver::get_resolver().ok()?;
-    match tokio::time::timeout(timeout, async move { resolver.lookup_ip(hostname).await }).await {
-        Ok(Ok(ips)) => Some(ips.iter().collect()),
-        _ => None,
+    match resolve_ip(hostname, timeout).await {
+        Ok(ips) => Some(ips),
+        Err(error) => {
+            tracing::warn!(hostname, error = %format!("{error:#}"), "DNS lookup failed");
+            None
+        }
     }
+}
+
+async fn resolve_ip(hostname: &str, timeout: Duration) -> Result<Vec<IpAddr>> {
+    let resolver = resolver::get_resolver()?.with_timeout(timeout);
+    let lookup = tokio::time::timeout(timeout, resolver.lookup_ip(hostname))
+        .await
+        .with_context(|| format!("DNS lookup timed out after {} ms", timeout.as_millis()))?
+        .context("DNS query failed")?;
+    let ips: Vec<_> = lookup.iter().collect();
+    anyhow::ensure!(!ips.is_empty(), "DNS response contained no IP addresses");
+    Ok(ips)
 }
 
 /// Perform a reverse DNS lookup for the given IP address with a timeout.
 pub async fn reverse_lookup(ip: IpAddr, timeout: Duration) -> Option<String> {
-    let resolver = resolver::get_resolver().ok()?;
+    let resolver = resolver::get_resolver().ok()?.with_timeout(timeout);
+    reverse_lookup_with_resolver(&resolver, ip, timeout).await
+}
+
+async fn reverse_lookup_with_resolver(
+    resolver: &pool::ResolverPool,
+    ip: IpAddr,
+    timeout: Duration,
+) -> Option<String> {
     match tokio::time::timeout(timeout, async move { resolver.reverse_lookup(ip).await }).await {
-        Ok(Ok(names)) => names.iter().next().map(|n| n.to_string()),
+        Ok(Ok(names)) => names
+            .answers()
+            .iter()
+            .find_map(|record| match &record.data {
+                hickory_proto::rr::RData::PTR(name) => Some(name.to_string()),
+                _ => None,
+            }),
         _ => None,
     }
 }
