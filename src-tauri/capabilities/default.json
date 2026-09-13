@@ -5,15 +5,42 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://github.com/shellrow"
+        },
+        {
+          "url": "https://github.com/shellrow/netdia"
+        },
+        {
+          "url": "https://donate.stripe.com/3cIbJ046Q0671z6ctHgIo01"
+        },
+        {
+          "url": "https://apps.microsoft.com/detail/9NLQ03PT1DXQ"
+        },
+        {
+          "url": "ms-windows-store://pdp/?productid=9NLQ03PT1DXQ"
+        }
+      ]
+    },
     {
       "identifier": "opener:allow-open-path",
       "allow": [
         {
-          "path": "https://apps.microsoft.com/detail/9NLQ03PT1DXQ"
+          "path": "$HOME/.netdia"
         },
         {
-          "path": "ms-windows-store://pdp/?productid=9NLQ03PT1DXQ"
+          "path": "$HOME/.netdia/**"
+        }
+      ]
+    },
+    {
+      "identifier": "opener:allow-reveal-item-in-dir",
+      "allow": [
+        {
+          "path": "$HOME/.netdia/**"
         }
       ]
     },

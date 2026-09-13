@@ -1,7 +1,8 @@
+use crate::events::EventEmitter;
 use std::net::IpAddr;
 
 use anyhow::Result;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::model::scan::{
@@ -18,7 +19,7 @@ pub async fn neighbor_scan(
     let app = app.clone();
     let run_id = run_id.to_string();
 
-    let _ = app.emit(
+    let _ = app.emit_logged(
         "neighborscan:start",
         NeighborScanStartPayload {
             run_id: run_id.clone(),
@@ -28,7 +29,7 @@ pub async fn neighbor_scan(
     let src_ipv4_opt = iface.ipv4_addrs().into_iter().next().map(IpAddr::V4);
     let src_ipv6_opt = iface.ipv6_addrs().into_iter().next().map(IpAddr::V6);
 
-    let _ = app.emit(
+    let _ = app.emit_logged(
         "hostscan:start",
         crate::model::scan::HostScanStartPayload {
             run_id: run_id.clone(),
@@ -50,14 +51,14 @@ pub async fn neighbor_scan(
         Ok(r) => r,
         Err(e) => {
             if token.is_cancelled() {
-                let _ = app.emit(
+                let _ = app.emit_logged(
                     "neighborscan:cancelled",
                     NeighborScanCancelledPayload {
                         run_id: run_id.clone(),
                     },
                 );
             } else {
-                let _ = app.emit(
+                let _ = app.emit_logged(
                     "neighborscan:error",
                     NeighborScanErrorPayload {
                         run_id: run_id.clone(),
@@ -70,7 +71,7 @@ pub async fn neighbor_scan(
     };
 
     if token.is_cancelled() {
-        let _ = app.emit(
+        let _ = app.emit_logged(
             "neighborscan:cancelled",
             NeighborScanCancelledPayload {
                 run_id: run_id.clone(),
@@ -124,6 +125,6 @@ pub async fn neighbor_scan(
         total: hostscan_result.total,
     };
 
-    let _ = app.emit("neighborscan:done", report.clone());
+    let _ = app.emit_logged("neighborscan:done", report.clone());
     Ok(report)
 }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed, watch } from "vue";
+import { useDiagnosticRun } from "../composables/useDiagnosticRun";
+import { ref, onMounted, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useDiagnosticListeners } from "../composables/useDiagnosticListeners";
 import type { IpInfo, IpInfoDual } from "../types/internet";
 import { fmtBytes, nv } from "../utils/formatter";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
@@ -9,6 +10,7 @@ import { usePrivacyGate } from "../composables/usePrivacyGate";
 
 // Public IP Info
 const loading = ref(false);
+const pageError = ref<string | null>(null);
 const ipv4 = ref<IpInfo | null>(null);
 const ipv6 = ref<IpInfo | null>(null);
 const { publicIpVisible, togglePublicIp, pubIpGate } = usePrivacyGate();
@@ -16,9 +18,12 @@ const { publicIpVisible, togglePublicIp, pubIpGate } = usePrivacyGate();
 async function refresh() {
   loading.value = true;
   try {
+    pageError.value = null;
     const data = (await invoke("get_public_ip_info")) as IpInfoDual;
     ipv4.value = (data.ipv4 ?? null) as IpInfo | null;
     ipv6.value = (data.ipv6 ?? null) as IpInfo | null;
+  } catch (error) {
+    pageError.value = `Could not load Internet information: ${String(error)}. Use Refresh to retry.`;
   } finally {
     loading.value = false;
   }
@@ -47,6 +52,10 @@ type SizeOption = (typeof sizeOptions.value)[number];
 // default 10MB
 const selectedSize = ref<SizeOption>(sizeOptions.value[2]);
 
+const latencyRunId = ref<string | null>(null);
+const speedtestRunId = ref<string | null>(null);
+const latencyRun = useDiagnosticRun("latency", latencyRunId);
+const speedtestRun = useDiagnosticRun("speedtest", speedtestRunId);
 const latencyRunning = ref(false);
 const latencyMs = ref<number | null>(null);
 const jitterMs = ref<number | null>(null);
@@ -111,23 +120,34 @@ function resetSpeedtestUi() {
   edgeColo.value = null;
 }
 
+let speedtestGeneration = 0;
+
 async function startSpeedtest() {
+  if (!listenersReady.value) {
+    pageError.value = "Diagnostics are not ready. Reopen this page if initialization failed.";
+    return;
+  }
   if (stStarting.value || stRunning.value) return;
 
+  const generation = ++speedtestGeneration;
   stStarting.value = true;
   try {
     resetSpeedtestUi();
     stRunning.value = true;
+    const runId = await speedtestRun.begin();
 
     latencyRunning.value = true;
     try {
-      await invoke("measure_latency");
+      const latencyId = await latencyRun.begin();
+      await invoke("measure_latency", { runId: latencyId });
     } catch {
       latencyRunning.value = false;
       latencyMs.value = null;
       jitterMs.value = null;
       edgeColo.value = null;
     }
+
+    if (generation !== speedtestGeneration || !listenersReady.value) return;
 
     const size = selectedSize.value?.bytes ?? sizeOptions.value[2].bytes;
     const dir = speedDirection.value ?? "download";
@@ -139,19 +159,35 @@ async function startSpeedtest() {
       max_duration_ms: maxDurationMs,
     };
 
-    await invoke("start_speedtest", { setting });
+    if (!speedtestRun.accepts(runId)) return;
+    await invoke("start_speedtest", { setting, runId });
+  } catch (error) {
+    await Promise.allSettled([speedtestRun.cancel(), latencyRun.cancel()]);
+    if (generation !== speedtestGeneration) return;
+    stRunning.value = false;
+    latencyRunning.value = false;
+    stDoneResult.value = "error";
+    stMessage.value = String(error);
   } finally {
     stStarting.value = false;
   }
 }
 
 async function stopSpeedtest() {
-  stStarting.value = false;
-  stRunning.value = false;
-  latencyRunning.value = false;
-  stInstantMbps.value = 0;
-
-  await invoke("stop_speedtest");
+  ++speedtestGeneration;
+  try {
+    const results = await Promise.allSettled([latencyRun.cancel(), speedtestRun.cancel()]);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+    stDoneResult.value = "canceled";
+  } catch (error) {
+    stDoneResult.value = "error";
+    stMessage.value = String(error);
+  } finally {
+    stRunning.value = false;
+    latencyRunning.value = false;
+    stInstantMbps.value = 0;
+  }
 }
 
 function badgeLabel() {
@@ -198,10 +234,6 @@ function badgeSeverity() {
   }
 }
 
-let unlistenLatencyDone: UnlistenFn | null = null;
-let unlistenUpdate: UnlistenFn | null = null;
-let unlistenDone: UnlistenFn | null = null;
-
 watch(speedDirection, () => {
   if (!stRunning.value) resetSpeedtestUi();
 });
@@ -215,57 +247,62 @@ watch(selectedSize, () => {
   if (!stRunning.value) resetSpeedtestUi();
 });
 
+const { listen, dispose, listenersReady } = useDiagnosticListeners();
+
 onMounted(async () => {
-  // initial refresh: IP info
-  refresh();
+  try {
+    // initial refresh: IP info
+    refresh();
 
-  // speedtest event listeners
-  unlistenLatencyDone = await listen("latency:done", (e:any) => {
-    const p = e.payload;
-    latencyMs.value = p.latency_ms ?? null;
-    jitterMs.value = p.jitter_ms ?? null;
-    edgeColo.value = p.colo ?? null;
-    latencyRunning.value = false;
-  });
+    // speedtest event listeners
+    await listen("latency:done", (e:any) => {
+      if (!latencyRunning.value || !latencyRun.accepts(e.payload?.run_id)) return;
+      const p = e.payload;
+      latencyMs.value = p.latency_ms ?? null;
+      jitterMs.value = p.jitter_ms ?? null;
+      edgeColo.value = p.colo ?? null;
+      latencyRunning.value = false;
+      latencyRun.finish();
+    });
 
-  unlistenUpdate = await listen("speedtest:update", (e: any) => {
-    const p = e.payload;
-    if (!p) return;
-    if (p.direction !== speedDirection.value) return;
+    await listen("speedtest:update", (e: any) => {
+      const p = e.payload;
+      if (!p || !speedtestRun.accepts(p.run_id)) return;
+      if (p.direction !== speedDirection.value) return;
 
-    stRunning.value = true;
-    stDoneResult.value = null;
-    stMessage.value = null;
+      stRunning.value = true;
+      stDoneResult.value = null;
+      stMessage.value = null;
 
-    stElapsedMs.value = p.elapsed_ms ?? 0;
-    stTransferred.value = p.transferred_bytes ?? 0;
-    stTarget.value = p.target_bytes ?? selectedSize.value.bytes;
-    stInstantMbps.value = p.instant_mbps ?? 0;
-    stAvgMbps.value = p.avg_mbps ?? 0;
-    stMaxMbps.value = Math.max(stMaxMbps.value, stInstantMbps.value);
-  });
+      stElapsedMs.value = p.elapsed_ms ?? 0;
+      stTransferred.value = p.transferred_bytes ?? 0;
+      stTarget.value = p.target_bytes ?? selectedSize.value.bytes;
+      stInstantMbps.value = p.instant_mbps ?? 0;
+      stAvgMbps.value = p.avg_mbps ?? 0;
+      stMaxMbps.value = Math.max(stMaxMbps.value, stInstantMbps.value);
+    });
 
-  unlistenDone = await listen("speedtest:done", (e: any) => {
-    const p = e.payload;
-    if (!p) return;
-    if (p.direction !== speedDirection.value) return;
+    await listen("speedtest:done", (e: any) => {
+      const p = e.payload;
+      if (!p || !speedtestRun.accepts(p.run_id)) return;
+      if (p.direction !== speedDirection.value) return;
 
-    stRunning.value = false;
-    stElapsedMs.value = p.elapsed_ms ?? stElapsedMs.value;
-    stTransferred.value = p.transferred_bytes ?? stTransferred.value;
-    stTarget.value = p.target_bytes ?? stTarget.value;
-    stAvgMbps.value = p.avg_mbps ?? stAvgMbps.value;
+      stRunning.value = false;
+      stElapsedMs.value = p.elapsed_ms ?? stElapsedMs.value;
+      stTransferred.value = p.transferred_bytes ?? stTransferred.value;
+      stTarget.value = p.target_bytes ?? stTarget.value;
+      stAvgMbps.value = p.avg_mbps ?? stAvgMbps.value;
 
-    stDoneResult.value = (p.result ?? "error") as Result;
-    stMessage.value = p.message ?? null;
-    stInstantMbps.value = 0;
-  });
-});
-
-onBeforeUnmount(async () => {
-  if (unlistenUpdate) await unlistenUpdate();
-  if (unlistenDone) await unlistenDone();
-  if (unlistenLatencyDone) await unlistenLatencyDone();
+      stDoneResult.value = (p.result ?? "error") as Result;
+      stMessage.value = p.message ?? null;
+      stInstantMbps.value = 0;
+      speedtestRun.finish();
+    });
+    listenersReady.value = true;
+  } catch (error) {
+    dispose();
+    pageError.value = `Could not initialize diagnostics: ${String(error)}. Reopen this page to retry.`;
+  }
 });
 
 function fmtDuration(ms: number): string {
@@ -279,15 +316,16 @@ function fmtDuration(ms: number): string {
 </script>
 
 <template>
-  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
+  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
+    <div v-if="pageError" role="alert" class="text-sm text-red-500">{{ pageError }}</div>
     <!-- Toolbar -->
-    <div ref="toolbarRef" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2">
+    <div ref="toolbarRef" class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-2">
       <div class="flex items-center gap-3 min-w-0">
         <span class="text-surface-500 dark:text-surface-400 text-sm">Public IP Information</span>
       </div>
       <div class="flex items-center gap-2 justify-end">
-        <Button outlined :icon="publicIpVisible ? 'pi pi-eye' : 'pi pi-eye-slash'" @click="togglePublicIp" class="icon-btn" severity="secondary" />
-        <Button outlined icon="pi pi-refresh" :loading="loading" @click="refresh" class="icon-btn" severity="secondary" />
+        <Button outlined :icon="publicIpVisible ? 'pi pi-eye' : 'pi pi-eye-slash'" @click="togglePublicIp" class="icon-btn" severity="secondary" :aria-label="publicIpVisible ? 'Hide public IP addresses' : 'Show public IP addresses'" />
+        <Button outlined icon="pi pi-refresh" :loading="loading" @click="refresh" class="icon-btn" severity="secondary" aria-label="Refresh internet information" />
       </div>
     </div>
 
@@ -388,8 +426,8 @@ function fmtDuration(ms: number): string {
           <!-- Speed Test card (full width) -->
           <Card class="md:col-span-2">
             <template #title>
-              <div class="flex items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center justify-end gap-2">
                   <span>Speed Test</span>
                   <Tag :severity="badgeSeverity()" :value="badgeLabel()" />
                 </div>
@@ -419,6 +457,7 @@ function fmtDuration(ms: number): string {
                     :disabled="stRunning || stStarting"
                     class="w-36"
                     size="small"
+                    aria-label="Speed test size"
                   />
                   <Button
                     icon="pi pi-play"
@@ -476,7 +515,7 @@ function fmtDuration(ms: number): string {
                 </div>
               </div>
 
-              <div class="mt-3">
+              <div class="mt-3" role="status" aria-live="polite">
                 <div class="flex items-center justify-between text-sm">
                   <div class="text-surface-500">
                     Progress: <span class="text-surface-900 dark:text-surface-0">{{ transferredText }}</span> / <span class="text-surface-900 dark:text-surface-0">{{ targetText }}</span>

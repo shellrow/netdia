@@ -16,6 +16,32 @@ export default defineConfig(async () => ({
       "@": new URL("./src", import.meta.url).pathname,
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("chart.js")) return "chart";
+          if (id.includes("primevue")) {
+            if (/primevue\/(datatable|column|paginator)\//.test(id)) {
+              return "primevue-data";
+            }
+            if (/primevue\/(dialog|drawer|tooltip|styleclass)\//.test(id)) {
+              return "primevue-overlay";
+            }
+            if (/primevue\/(chart|timeline)\//.test(id)) {
+              return "primevue-visualization";
+            }
+            return "primevue-controls";
+          }
+          if (id.includes("@primeuix")) return "primeuix";
+          if (id.includes("@tauri-apps")) return "tauri";
+          if (id.includes("/vue/") || id.includes("vue-router")) return "vue";
+          return "vendor";
+        },
+      },
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

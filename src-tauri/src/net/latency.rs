@@ -1,7 +1,7 @@
+use crate::operation::RunEmitter;
 use anyhow::{Context, Result};
 use reqwest::Client;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
 
 use crate::model::speedtest::{LatencyDonePayload, LatencyUpdatePayload};
 
@@ -21,7 +21,7 @@ fn latency_probe_url() -> String {
 }
 
 async fn measure_with_client<F>(
-    app: &AppHandle,
+    app: &RunEmitter<'_>,
     client: &Client,
     samples: u32,
     mut probe: F,
@@ -54,7 +54,7 @@ where
     Ok(())
 }
 
-pub async fn measure_latency_jitter(app: &AppHandle, samples: u32) -> Result<()> {
+pub async fn measure_latency_jitter(app: &RunEmitter<'_>, samples: u32) -> Result<()> {
     let client = build_client()?;
     let probe_url = latency_probe_url();
 
@@ -87,7 +87,7 @@ pub async fn measure_latency_jitter(app: &AppHandle, samples: u32) -> Result<()>
 }
 
 fn median(mut v: Vec<f64>) -> f64 {
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    v.sort_by(f64::total_cmp);
     let n = v.len();
     if n == 0 {
         return f64::NAN;
@@ -108,7 +108,7 @@ fn stddev(v: &[f64]) -> f64 {
     var.sqrt()
 }
 
-fn emit_latency_update(app: &AppHandle, sample: u32, total: u32, rtt_ms: f64) {
+fn emit_latency_update(app: &RunEmitter<'_>, sample: u32, total: u32, rtt_ms: f64) {
     let _ = app.emit(
         "latency:update",
         LatencyUpdatePayload {
@@ -120,7 +120,7 @@ fn emit_latency_update(app: &AppHandle, sample: u32, total: u32, rtt_ms: f64) {
     );
 }
 
-fn emit_latency_done(app: &AppHandle, samples: Vec<f64>, colo: Option<String>) {
+fn emit_latency_done(app: &RunEmitter<'_>, samples: Vec<f64>, colo: Option<String>) {
     let latency_ms = median(samples.clone());
     let jitter_ms = stddev(&samples);
 

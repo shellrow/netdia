@@ -1,107 +1,60 @@
-use std::sync::Arc;
-
-use tauri::{AppHandle, Emitter, State};
+use tauri::AppHandle;
 
 use crate::{
     model::speedtest::{SpeedtestDonePayload, SpeedtestResult, SpeedtestSetting},
     net::{self, speedtest::MAX_DURATION},
-    state::AppState,
+    operation::{cancel_op, claim_op, RunEmitter, OP_SPEEDTEST},
 };
 
 #[tauri::command]
 pub async fn start_speedtest(
     app: AppHandle,
-    state: State<'_, Arc<AppState>>,
+    run_id: String,
     setting: SpeedtestSetting,
 ) -> Result<(), String> {
-    // If a speedtest is already running, abort it
-    {
-        let mut h = state.speedtest_task.lock().await;
-        if let Some(handle) = h.take() {
-            handle.abort();
-        }
-        let mut last = state.speedtest_last.lock().await;
-        *last = Some((setting.direction.clone(), setting.target_bytes));
-    }
-
+    let operation = claim_op(OP_SPEEDTEST, &run_id)?;
+    super::validation::validate_speedtest(&setting)?;
     let max_ms = setting
         .max_duration_ms
         .unwrap_or(MAX_DURATION.as_millis() as u64);
     let max = std::time::Duration::from_millis(max_ms);
 
-    let app2 = app.clone();
-    let state2 = state.inner().clone();
-
-    let handle = tauri::async_runtime::spawn(async move {
-        let r = net::speedtest::run_speedtest(
-            &app2,
-            setting.direction.clone(),
-            setting.test_type,
-            setting.target_bytes,
-            max,
-        )
-        .await;
-
-        // Send done event with error
-        if let Err(e) = r {
-            let _ = app2.emit(
+    tauri::async_runtime::spawn(async move {
+        let events = RunEmitter {
+            app: &app,
+            run_id: &run_id,
+        };
+        let result = tokio::select! {
+            biased;
+            _ = operation.token.cancelled() => Err(anyhow::anyhow!("cancelled")),
+            result = net::speedtest::run_speedtest(
+                &events, setting.direction.clone(), setting.test_type, setting.target_bytes, max,
+            ) => result,
+        };
+        if let Err(error) = result {
+            let _ = events.emit(
                 "speedtest:done",
                 SpeedtestDonePayload {
                     direction: setting.direction,
-                    result: SpeedtestResult::Error,
+                    result: if operation.token.is_cancelled() {
+                        SpeedtestResult::Canceled
+                    } else {
+                        SpeedtestResult::Error
+                    },
                     elapsed_ms: 0,
                     transferred_bytes: 0,
                     target_bytes: setting.target_bytes,
                     avg_mbps: 0.0,
-                    message: Some(e.to_string()),
+                    message: Some(error.to_string()),
                 },
             );
         }
-
-        // Clear handle
-        let mut h = state2.speedtest_task.lock().await;
-        *h = None;
+        drop(operation);
     });
-
-    {
-        let mut h = state.speedtest_task.lock().await;
-        *h = Some(handle);
-    }
-
     Ok(())
 }
 
 #[tauri::command]
-pub async fn stop_speedtest(app: AppHandle, state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    let last = { state.speedtest_last.lock().await.clone() };
-
-    let aborted = {
-        let mut h = state.speedtest_task.lock().await;
-        if let Some(handle) = h.take() {
-            handle.abort();
-            true
-        } else {
-            false
-        }
-    };
-
-    // Notify canceled
-    if aborted {
-        if let Some((direction, target_bytes)) = last {
-            let _ = app.emit(
-                "speedtest:done",
-                SpeedtestDonePayload {
-                    direction,
-                    result: SpeedtestResult::Canceled,
-                    elapsed_ms: 0,
-                    transferred_bytes: 0,
-                    target_bytes,
-                    avg_mbps: 0.0,
-                    message: None,
-                },
-            );
-        }
-    }
-
-    Ok(())
+pub async fn stop_speedtest(run_id: String) -> bool {
+    cancel_op(OP_SPEEDTEST, &run_id).await
 }

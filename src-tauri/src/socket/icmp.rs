@@ -31,16 +31,16 @@ impl IcmpSocketType {
     }
 
     /// Converts the ICMP socket type from a `socket2::Type`.
-    pub(crate) fn from_sock_type(sock_type: SockType) -> Self {
+    pub(crate) fn from_sock_type(sock_type: SockType) -> io::Result<Self> {
         match sock_type {
-            SockType::DGRAM => IcmpSocketType::Dgram,
-            SockType::RAW => IcmpSocketType::Raw,
-            _ => panic!("Invalid ICMP socket type"),
+            SockType::DGRAM => Ok(IcmpSocketType::Dgram),
+            SockType::RAW => Ok(IcmpSocketType::Raw),
+            _ => Err(io::Error::other("unsupported ICMP socket type")),
         }
     }
 
     /// Converts the ICMP socket type to a `socket2::Type`.
-    pub(crate) fn to_sock_type(&self) -> SockType {
+    pub(crate) fn to_sock_type(self) -> SockType {
         match self {
             IcmpSocketType::Dgram => SockType::DGRAM,
             IcmpSocketType::Raw => SockType::RAW,
@@ -200,6 +200,15 @@ impl AsyncIcmpSocket {
         }
 
         let sock_type = socket.r#type()?;
+        #[cfg(target_os = "linux")]
+        if sock_type == SockType::DGRAM && config.bind.is_none() {
+            // Allocate the kernel-owned ping identifier before sending requests.
+            let address = match config.socket_family {
+                SocketFamily::IPV4 => SocketAddr::from(([0, 0, 0, 0], 0)),
+                SocketFamily::IPV6 => SocketAddr::from(([0u16; 8], 0)),
+            };
+            socket.bind(&address.into())?;
+        }
 
         // Convert socket2::Socket into std::net::UdpSocket
         #[cfg(windows)]
@@ -220,9 +229,18 @@ impl AsyncIcmpSocket {
 
         Ok(Self {
             inner,
-            socket_type: IcmpSocketType::from_sock_type(sock_type),
+            socket_type: IcmpSocketType::from_sock_type(sock_type)?,
             socket_family: config.socket_family,
         })
+    }
+
+    /// Return the identifier that the kernel will put on the wire.
+    pub fn echo_identifier(&self, requested: u16) -> io::Result<u16> {
+        #[cfg(target_os = "linux")]
+        if self.socket_type.is_dgram() {
+            return Ok(self.local_addr()?.port());
+        }
+        Ok(requested)
     }
 
     /// Send a packet asynchronously.

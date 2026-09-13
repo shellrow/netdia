@@ -3,7 +3,7 @@ import Default from './layouts/Default.vue';
 </script>
 
 <template>
-  <Default><router-view></router-view></Default>
+  <Default />
 </template>
 
 <style>
@@ -15,9 +15,5 @@ body {
   padding: 0 !important;
   margin: 0;
   overflow: hidden;
-  user-select: none;
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
 }
 </style>

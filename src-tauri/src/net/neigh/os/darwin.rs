@@ -1,11 +1,11 @@
 #![allow(non_camel_case_types)]
 
-use libc::{c_char, c_int, c_uchar, pid_t, size_t};
+use libc::{c_int, c_uchar, pid_t, size_t};
 use std::{
     collections::HashMap,
     ffi::c_void,
     io, mem,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr},
     ptr,
 };
 
@@ -17,7 +17,6 @@ const AF_ROUTE: c_int = 17;
 const PF_ROUTE: c_int = 17;
 const AF_LINK: c_int = 18;
 const AF_INET: c_int = 2;
-const AF_INET6: c_int = 30;
 
 //const NET_RT_DUMP: c_int = 1;
 const NET_RT_FLAGS: c_int = 2;
@@ -27,14 +26,6 @@ const RTF_LLINFO: c_int = 1024;
 
 // sockaddr alignment
 const SA_ALIGN: usize = 4;
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct sockaddr {
-    sa_len: c_uchar,
-    sa_family: c_uchar,
-    sa_data: [c_char; 14],
-}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -159,32 +150,6 @@ fn roundup(len: usize) -> usize {
     }
 }
 
-/// Parse an IP address from a `sockaddr`
-fn ip_from_sockaddr(sa: &sockaddr) -> Option<IpAddr> {
-    unsafe {
-        match sa.sa_family as c_int {
-            AF_INET => {
-                let sin = &*(sa as *const _ as *const libc::sockaddr_in);
-                let n = u32::from_be(sin.sin_addr.s_addr);
-                Some(IpAddr::V4(Ipv4Addr::from(n)))
-            }
-            AF_INET6 => {
-                // Require the full `sockaddr_in6` to be present.
-                let sin6 = &*(sa as *const _ as *const libc::sockaddr_in6);
-                let want = core::mem::size_of::<libc::sockaddr_in6>();
-                if (sa.sa_len as usize) < want {
-                    // prevent reading a truncated variable-length sockaddr
-                    return None;
-                }
-                // `s6_addr` is raw big-endian bytes; `Ipv6Addr::from([u8;16])` expects octets.
-                let addr_bytes = sin6.sin6_addr.s6_addr;
-                Some(IpAddr::V6(Ipv6Addr::from(addr_bytes)))
-            }
-            _ => None,
-        }
-    }
-}
-
 fn code_to_error(err: i32) -> io::Error {
     let kind = match err {
         17 => io::ErrorKind::AlreadyExists, // EEXIST
@@ -199,87 +164,79 @@ fn code_to_error(err: i32) -> io::Error {
 /// Extract `(IP, MAC)` pair from a routing message's address block.
 fn message_to_arppair(msg: &[u8]) -> Option<(IpAddr, MacAddr)> {
     let mut off = 0usize;
-    let mut ip: Option<Ipv4Addr> = None;
-    let mut mac: Option<MacAddr> = None;
-    // Walk `sockaddr` records while there is room for a header.
-    while off + core::mem::size_of::<sockaddr>() <= msg.len() {
-        // Read the sockaddr header
-        let sa = unsafe { &*(msg[off..].as_ptr() as *const sockaddr) };
-        let sa_len = sa.sa_len as usize;
-
-        // `sa_len == 0` can appear as "no address" (alignment-only slot).
-        // Advance by the platform's alignment unit (4 on BSD/Darwin).
-        if sa_len == 0 {
+    let mut ip = None;
+    let mut mac = None;
+    while off + 2 <= msg.len() {
+        let len = usize::from(msg[off]);
+        if len == 0 {
             off += roundup(0);
             continue;
         }
-        // If the element claims to extend past the buffer, skip it conservatively.
-        if off + sa_len > msg.len() {
-            off += roundup(sa_len);
-            continue;
+        if len < 2 {
+            return None;
         }
-
-        match sa.sa_family as c_int {
+        let record = msg.get(off..off.checked_add(len)?)?;
+        match c_int::from(record[1]) {
             AF_INET => {
-                // Target IPv4 of ARP. `sockaddr_in` and `sockaddr_inarp` share the initial layout,
-                // so `sin_addr` sits at the same position.
-                if let Some(IpAddr::V4(v4)) = ip_from_sockaddr(sa) {
-                    ip = Some(v4);
-                    if let (Some(v4), Some(m)) = (ip, mac) {
-                        return Some((IpAddr::V4(v4), m));
-                    }
-                }
+                let start = mem::offset_of!(libc::sockaddr_in, sin_addr);
+                let octets: [u8; 4] = record.get(start..start + 4)?.try_into().ok()?;
+                ip = Some(IpAddr::V4(Ipv4Addr::from(octets)));
             }
             AF_LINK => {
-                // Extract LLADDR from `sockaddr_dl`.
-                let sdl = unsafe { &*(sa as *const _ as *const libc::sockaddr_dl) };
-                let nlen = sdl.sdl_nlen as usize;
-                let alen = sdl.sdl_alen as usize;
-                let total = sdl.sdl_len as usize;
-
-                // Validate against the *actual* struct length (`sdl_len`), and also
-                // make sure the caller-provided `sa_len` is at least that long.
-                if total >= core::mem::size_of::<libc::sockaddr_dl>()
-                    && alen >= 6
-                    && sa_len >= total
-                {
-                    let base = sa as *const _ as *const u8;
-                    let data_base = &sdl.sdl_data as *const _ as *const u8;
-                    let data_off = unsafe { data_base.offset_from(base) } as usize;
-
-                    // LLADDR is at `sdl_data + sdl_nlen`.
-                    if data_off + nlen + alen <= total {
-                        let mac_ptr = unsafe { data_base.add(nlen) };
-                        let m = MacAddr::from_octets(unsafe {
-                            [
-                                *mac_ptr.add(0),
-                                *mac_ptr.add(1),
-                                *mac_ptr.add(2),
-                                *mac_ptr.add(3),
-                                *mac_ptr.add(4),
-                                *mac_ptr.add(5),
-                            ]
-                        });
-                        mac = Some(m);
-                        if let (Some(v4), Some(m)) = (ip, mac) {
-                            return Some((IpAddr::V4(v4), m));
-                        }
-                    }
+                let nlen = usize::from(*record.get(mem::offset_of!(libc::sockaddr_dl, sdl_nlen))?);
+                let alen = usize::from(*record.get(mem::offset_of!(libc::sockaddr_dl, sdl_alen))?);
+                if alen >= 6 {
+                    let start = mem::offset_of!(libc::sockaddr_dl, sdl_data) + nlen;
+                    let address = record.get(start..start + alen)?;
+                    mac = Some(MacAddr::from_octets(address[..6].try_into().ok()?));
                 }
             }
             _ => {}
         }
-
-        // Advance to the next record; BSD/Darwin sockaddrs are 4-byte aligned.
-        off += roundup(sa_len);
+        if let (Some(ip), Some(mac)) = (ip, mac) {
+            return Some((ip, mac));
+        }
+        off += roundup(len);
     }
-
     None
+}
+
+fn parse_neighbor_table(buf: &[u8]) -> io::Result<HashMap<IpAddr, MacAddr>> {
+    let mut arp_map = HashMap::new();
+    let mut off = 0usize;
+    while off < buf.len() {
+        let header_len = mem::size_of::<rt_msghdr>();
+        if buf.len() - off < header_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "truncated routing header",
+            ));
+        }
+        // The byte buffer does not guarantee alignment. The length check above
+        // makes an unaligned copy of this integer-only C header safe.
+        let hdr = unsafe { ptr::read_unaligned(buf[off..].as_ptr().cast::<rt_msghdr>()) };
+        let msglen = usize::from(hdr.rtm_msglen);
+        if msglen < header_len || msglen > buf.len() - off {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid routing message length",
+            ));
+        }
+        if hdr.rtm_version == RTM_VERSION {
+            if hdr.rtm_errno != 0 {
+                return Err(code_to_error(hdr.rtm_errno));
+            }
+            if let Some((ip, mac)) = message_to_arppair(&buf[off + header_len..off + msglen]) {
+                arp_map.insert(ip, mac);
+            }
+        }
+        off += msglen;
+    }
+    Ok(arp_map)
 }
 
 /// Build an ARP/Neighbor table from the BSD/Darwin routing socket via `sysctl`.
 pub fn get_neighbor_table() -> io::Result<HashMap<IpAddr, MacAddr>> {
-    let mut arp_map: HashMap<IpAddr, MacAddr> = HashMap::new();
     // sysctl net.route dump for ARP/neighbor entries (IPv4 only here).
     let mut mib = [
         CTL_NET,      // net
@@ -292,33 +249,44 @@ pub fn get_neighbor_table() -> io::Result<HashMap<IpAddr, MacAddr>> {
     // Includes ENOMEM retry internally; length is truncated to actual bytes read.
     let buf = sysctl_vec(&mut mib)?;
 
-    let mut off = 0usize;
-    // Each record starts with `rt_msghdr` followed by a variable-length sockaddr block.
-    while off + mem::size_of::<rt_msghdr>() <= buf.len() {
-        // Header view (no copy).
-        let hdr = unsafe { &*(buf[off..].as_ptr() as *const rt_msghdr) };
-        let msglen = hdr.rtm_msglen as usize;
-        if msglen == 0 || off + msglen > buf.len() {
-            break;
-        }
+    parse_neighbor_table(&buf)
+}
 
-        // Version mismatch: skip the record but keep reading.
-        if hdr.rtm_version != RTM_VERSION {
-            off += msglen;
-            continue;
-        }
-        if hdr.rtm_errno != 0 {
-            return Err(code_to_error(hdr.rtm_errno));
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        // Parse the sockaddr block right after the header.
-        let addr_block = &buf[off + mem::size_of::<rt_msghdr>()..off + msglen];
-        if let Some((ip, mac)) = message_to_arppair(addr_block) {
-            arp_map.insert(ip, mac);
-        }
-
-        off += msglen;
+    #[test]
+    fn rejects_short_routing_records_and_headers() {
+        assert!(parse_neighbor_table(&[0; 3]).is_err());
+        let mut record = vec![0; mem::size_of::<rt_msghdr>()];
+        record[..2].copy_from_slice(&1u16.to_ne_bytes());
+        assert!(parse_neighbor_table(&record).is_err());
     }
 
-    Ok(arp_map)
+    #[test]
+    fn parses_unaligned_records_and_rejects_truncated_addresses() {
+        let mut addresses = vec![0; 16 + 16];
+        addresses[0] = 16;
+        addresses[1] = AF_INET as u8;
+        addresses[4..8].copy_from_slice(&[192, 0, 2, 1]);
+        addresses[16] = 16;
+        addresses[17] = AF_LINK as u8;
+        addresses[22] = 6;
+        addresses[24..30].copy_from_slice(&[0, 1, 2, 3, 4, 5]);
+        let expected = message_to_arppair(&addresses).unwrap();
+        assert_eq!(expected.0, IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)));
+        for end in 0..30 {
+            assert!(message_to_arppair(&addresses[..end]).is_none());
+        }
+        let header_len = mem::size_of::<rt_msghdr>();
+        let mut bytes = vec![0; 1 + header_len];
+        bytes[1..3].copy_from_slice(&((header_len + addresses.len()) as u16).to_ne_bytes());
+        bytes[3] = RTM_VERSION;
+        bytes.extend_from_slice(&addresses);
+        assert_eq!(
+            parse_neighbor_table(&bytes[1..]).unwrap().get(&expected.0),
+            Some(&expected.1)
+        );
+    }
 }

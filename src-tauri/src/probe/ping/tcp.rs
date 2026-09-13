@@ -1,7 +1,8 @@
+use crate::events::EventEmitter;
 use anyhow::Result;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
@@ -49,7 +50,7 @@ pub async fn tcp_ping(
 
     for seq in 1..=setting.count {
         if token.is_cancelled() {
-            let _ = app.emit(
+            let _ = app.emit_logged(
                 "ping:cancelled",
                 PingCancelledPayload {
                     run_id: run_id.to_string(),
@@ -96,7 +97,7 @@ pub async fn tcp_ping(
 
                 let transmitted = seq;
                 let percent = (seq as f32) * 100.0 / (setting.count as f32);
-                let _ = app.emit(
+                let _ = app.emit_logged(
                     "ping:progress",
                     PingProgressPayload {
                         run_id: run_id.to_string(),
@@ -126,8 +127,9 @@ pub async fn tcp_ping(
         {
             Ok(mut stream) => {
                 // Handshake done. Connected.
-                rtt_ms = Some(started.elapsed().as_millis() as u64);
-                rtts_ok.push(rtt_ms.unwrap());
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                rtt_ms = Some(elapsed_ms);
+                rtts_ok.push(elapsed_ms);
                 // Close the connection
                 let _ = stream.shutdown().await;
             }
@@ -157,7 +159,7 @@ pub async fn tcp_ping(
 
         let transmitted = seq;
         let percent = (seq as f32) * 100.0 / (setting.count as f32);
-        let _ = app.emit(
+        let _ = app.emit_logged(
             "ping:progress",
             PingProgressPayload {
                 run_id: run_id.to_string(),
@@ -174,7 +176,7 @@ pub async fn tcp_ping(
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(setting.send_rate_ms)) => {}
                 _ = token.cancelled() => {
-                    let _ = app.emit(
+                    let _ = app.emit_logged(
                         "ping:cancelled",
                         PingCancelledPayload {
                             run_id: run_id.to_string(),
@@ -205,7 +207,7 @@ pub async fn tcp_ping(
     };
 
     // Send done event
-    let _ = app.emit(
+    let _ = app.emit_logged(
         "ping:done",
         PingDonePayload {
             run_id: run_id.to_string(),

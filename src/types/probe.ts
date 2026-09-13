@@ -214,6 +214,7 @@ export interface TraceSetting {
 }
 
 export interface TraceHop {
+  run_id: string;
   hop: number;
   ip_addr?: string | null;
   rtt_ms?: number | null;
@@ -222,6 +223,7 @@ export interface TraceHop {
 }
 
 export interface TraceDonePayload {
+  run_id: string;
   reached: boolean;
   hops: number;
   ip_addr: string;

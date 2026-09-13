@@ -1,14 +1,14 @@
 <script setup lang="ts">
+import { useDiagnosticRun } from "../composables/useDiagnosticRun";
 import {
   ref,
   reactive,
   computed,
   onMounted,
-  onBeforeUnmount,
   watch,
 } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { useDiagnosticListeners } from "../composables/useDiagnosticListeners";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
 import {
@@ -36,6 +36,7 @@ const form = reactive({
 });
 
 const activeRunId = ref<string | null>(null);
+const run = useDiagnosticRun("portscan", activeRunId);
 const running = ref(false);
 const canceling = ref(false);
 const cancelled = ref(false);
@@ -167,39 +168,57 @@ function resetResult() {
 
 const canStart = computed(() => !!form.host.trim());
 
+let preparing = false;
+let preparationCanceled = false;
+
 async function startScan() {
-  if (!canStart.value) return;
+  if (preparing) return;
+  if (!listenersReady.value) {
+    err.value = "Diagnostics are not ready. Reopen this page if initialization failed.";
+    return;
+  }
+  if (!canStart.value || running.value) return;
   resetResult();
   running.value = true;
   loading.value = true;
 
+  let runId: string | undefined;
   try {
+    preparing = true;
+    preparationCanceled = false;
+    runId = await run.begin();
     const setting = await toSetting();
-    await invoke<PortScanReport>("port_scan", { setting });
+    preparing = false;
+    if (preparationCanceled || !listenersReady.value) return;
+    await invoke<PortScanReport>("port_scan", { setting, runId });
   } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    if (runId && !run.isLatest(runId)) return;
+    await run.cancel(runId).catch((error) => console.error("Failed to release diagnostic", error));
+    const message = String(e?.message ?? e);
+    if (!cancelled.value && message.toLowerCase() !== "cancelled") {
+      err.value = message;
+    }
     running.value = false;
   } finally {
+    if (runId && !run.isLatest(runId)) return;
+    preparing = false;
     loading.value = false;
   }
 }
 
 async function cancelScan() {
+  preparationCanceled = true;
   canceling.value = true;
   try {
-    await invoke("cancel_portscan");
-  } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    await run.cancel();
+    cancelled.value = true;
+  } catch (error) {
+    err.value = String(error);
   } finally {
+    serviceDetecting.value = false;
+    running.value = false;
     canceling.value = false;
-  }
-}
-
-async function initProbeDb() {
-  try {
-    await invoke("init_probe_db");
-  } catch (e) {
-    console.error("Failed to init probe database:", e);
+    loading.value = false;
   }
 }
 
@@ -212,122 +231,111 @@ const progressPct = computed(() => {
 
 const openCount = computed(() => openOnly.value.length);
 
-let unlistenStart: UnlistenFn | null = null;
-let unlistenProgress: UnlistenFn | null = null;
-let unlistenOpen: UnlistenFn | null = null;
-let unlistenDone: UnlistenFn | null = null;
-let unlistenSvcStart: UnlistenFn | null = null;
-let unlistenSvcDone: UnlistenFn | null = null;
-let unlistenCancelled: UnlistenFn | null = null;
-let unlistenError: UnlistenFn | null = null;
-
 // Set up event listeners on mount
+const { listen, dispose, listenersReady } = useDiagnosticListeners();
+
 onMounted(async () => {
-  // Initialize probe database
-  initProbeDb();
+  try {
+    // Start event
+    await listen("portscan:start", (ev: any) => {
+      const runId: string | undefined = ev?.payload.run_id;
+      if (!run.accepts(runId)) return;
+      progressDone.value = 0;
+      progressTotal.value = 0;
+    });
+    // Progress event
+    await listen("portscan:progress", (ev: any) => {
+      const p = ev?.payload as PortScanProgress | undefined;
+      if (!p) return;
+      if (!run.accepts(p.run_id)) return;
+      progressDone.value = p.done;
+      progressTotal.value = p.total;
+    });
+    // Open port sample event
+    await listen("portscan:open", (ev: any) => {
+      const s = ev?.payload as PortScanSample | undefined;
+      if (!s) return;
+      if (!run.accepts(s.run_id)) return;
+      openOnly.value = [...openOnly.value, s];
+    });
 
-  // Start event
-  unlistenStart = await listen("portscan:start", (ev: any) => {
-    const runId: string | undefined = ev?.payload.run_id;
-    if (runId) {
-      activeRunId.value = runId;
-    }
-    progressDone.value = 0;
-    progressTotal.value = 0;
-  });
-  // Progress event
-  unlistenProgress = await listen("portscan:progress", (ev: any) => {
-    const p = ev?.payload as PortScanProgress | undefined;
-    if (!p) return;
-    if (activeRunId.value && p.run_id !== activeRunId.value) return;
-    progressDone.value = p.done;
-    progressTotal.value = p.total;
-  });
-  // Open port sample event
-  unlistenOpen = await listen("portscan:open", (ev: any) => {
-    const s = ev?.payload as PortScanSample | undefined;
-    if (!s) return;
-    if (activeRunId.value && s.run_id !== activeRunId.value) return;
-    openOnly.value = [...openOnly.value, s];
-  });
+    await listen(
+      "portscan:service_detection_start",
+      (ev: any) => {
+        const runId = ev?.payload as string | undefined;
+        if (!run.accepts(runId)) return;
+        serviceDetecting.value = true;
+      },
+    );
 
-  unlistenSvcStart = await listen(
-    "portscan:service_detection_start",
-    (ev: any) => {
-      const runId = ev?.payload as string | undefined;
-      if (activeRunId.value && runId && runId !== activeRunId.value) return;
-      serviceDetecting.value = true;
-    },
-  );
+    await listen(
+      "portscan:service_detection_done",
+      (ev: any) => {
+        const runId = ev?.payload as string | undefined;
+        if (!run.accepts(runId)) return;
+        serviceDetecting.value = false;
+      },
+    );
 
-  unlistenSvcDone = await listen(
-    "portscan:service_detection_done",
-    (ev: any) => {
-      const runId = ev?.payload as string | undefined;
-      if (activeRunId.value && runId && runId !== activeRunId.value) return;
+    // Done event
+    await listen("portscan:done", (ev: any) => {
+      const rep: PortScanReport | undefined = ev?.payload;
+      if (!rep || !run.accepts(rep.run_id)) return;
+      if (rep) {
+        report.value = rep;
+        openOnly.value = rep.samples ?? [];
+      }
+      running.value = false;
+      run.finish();
+    });
+
+    await listen("portscan:cancelled", (ev: any) => {
+      const p = ev?.payload ?? {};
+      const runId = p.run_id as string | undefined;
+      if (!run.accepts(runId)) return;
+
+      cancelled.value = true;
+      running.value = false;
       serviceDetecting.value = false;
-    },
-  );
+      loading.value = false;
+      canceling.value = false;
+      run.finish();
+    });
 
-  // Done event
-  unlistenDone = await listen("portscan:done", (ev: any) => {
-    const rep: PortScanReport | undefined = ev?.payload;
-    if (rep) {
-      report.value = rep;
-      openOnly.value = rep.samples ?? [];
-    }
-    running.value = false;
-  });
+    await listen("portscan:error", (ev: any) => {
+      const p = ev?.payload ?? {};
+      const runId = p.run_id ?? p[0];
+      const msg = p.message ?? p[1] ?? p;
 
-  unlistenCancelled = await listen("portscan:cancelled", (ev: any) => {
-    const p = ev?.payload ?? {};
-    const runId = p.run_id as string | undefined;
-    if (activeRunId.value && runId && runId !== activeRunId.value) return;
+      if (!run.accepts(runId)) return;
 
-    cancelled.value = true;
-    running.value = false;
-    serviceDetecting.value = false;
-    loading.value = false;
-    canceling.value = false;
-  });
-
-  unlistenError = await listen("portscan:error", (ev: any) => {
-    const p = ev?.payload ?? {};
-    const runId = p.run_id ?? p[0];
-    const msg = p.message ?? p[1] ?? p;
-
-    if (activeRunId.value && runId && runId !== activeRunId.value) return;
-
-    err.value = String(msg);
-    running.value = false;
-    serviceDetecting.value = false;
-    loading.value = false;
-    canceling.value = false;
-  });
+      err.value = String(msg);
+      running.value = false;
+      serviceDetecting.value = false;
+      loading.value = false;
+      canceling.value = false;
+      run.finish();
+    });
+    listenersReady.value = true;
+  } catch (error) {
+    dispose();
+    err.value = `Could not initialize diagnostics: ${String(error)}. Reopen this page to retry.`;
+  }
 });
 
 // Clean up listeners on unmount
-onBeforeUnmount(() => {
-  unlistenStart?.();
-  unlistenProgress?.();
-  unlistenOpen?.();
-  unlistenDone?.();
-  unlistenSvcStart?.();
-  unlistenSvcDone?.();
-  unlistenCancelled?.();
-  unlistenError?.();
-});
+
 </script>
 
 <template>
   <div
     ref="wrapRef"
-    class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
+    class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
   >
     <!-- Toolbar -->
     <div
       ref="toolbarRef"
-      class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-center"
+      class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-center"
     >
       <!-- Left: form controls -->
       <div class="flex items-end gap-3 min-w-0 flex-wrap">
@@ -341,6 +349,7 @@ onBeforeUnmount(() => {
             ]"
             optionLabel="label"
             optionValue="value"
+            aria-label="Scan protocol"
             class="min-w-[120px]"
             size="small"
           />
@@ -351,6 +360,8 @@ onBeforeUnmount(() => {
           <InputText
             v-model="form.host"
             placeholder="e.g. 192.168.1.1 or host"
+            aria-label="Host or IP address"
+            @keydown.enter.prevent="startScan"
             class="w-60"
             size="small"
           />
@@ -369,6 +380,7 @@ onBeforeUnmount(() => {
             ]"
             optionLabel="label"
             optionValue="value"
+            aria-label="Port preset"
             class="min-w-[140px]"
             size="small"
           />
@@ -379,6 +391,7 @@ onBeforeUnmount(() => {
           <InputText
             v-model="form.userPortsText"
             placeholder="e.g. 80,443,8080-8090"
+            aria-label="Custom ports"
             class="w-[220px]"
             size="small"
           />
@@ -393,6 +406,7 @@ onBeforeUnmount(() => {
             :step="100"
             inputClass="w-[80px]"
             size="small"
+            aria-label="Timeout in milliseconds"
           />
         </div>
 
@@ -453,6 +467,8 @@ onBeforeUnmount(() => {
             <template #content>
               <div
                 class="flex items-center justify-between mb-2 text-sm text-surface-500"
+                role="status"
+                aria-live="polite"
               >
                 <div>Total: {{ progressTotal || "-" }}</div>
                 <div>Done: {{ progressDone }} / {{ progressTotal || "-" }}</div>
@@ -468,7 +484,7 @@ onBeforeUnmount(() => {
           <Card>
             <template #title>Results</template>
             <template #content>
-              <div v-if="err" class="text-red-500 text-sm mb-2">
+              <div v-if="err" class="text-red-500 text-sm mb-2" role="alert">
                 {{ err }}
               </div>
               <div
@@ -479,6 +495,7 @@ onBeforeUnmount(() => {
               <div
                 v-if="serviceDetecting"
                 class="mb-2 text-xs text-surface-500 flex items-center gap-2"
+                role="status"
               >
                 <i class="pi pi-spin pi-spinner"></i>
                 <span>Service detection in progress...</span>

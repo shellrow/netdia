@@ -2,7 +2,7 @@ use crate::{
     model::endpoint::Port,
     probe::service::probe::{PortProbeDb, ProbePayload, ProbePayloadDb, ServiceProbe},
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ndb_tcp_service::TcpServiceDb;
 use ndb_udp_service::UdpServiceDb;
 use std::{collections::HashMap, sync::OnceLock};
@@ -57,14 +57,14 @@ pub fn init_udp_service_db() -> Result<()> {
 /// Initialize Port Probe database
 pub fn init_port_probe_db() -> Result<()> {
     let port_probe_db: PortProbeDb = serde_json::from_str(crate::resources::PORT_PROBES_JSON)
-        .expect("Invalid port-probes.json format");
+        .context("Invalid port-probes.json format")?;
 
     let mut map: HashMap<Port, Vec<ServiceProbe>> = HashMap::new();
     for (port, probes) in port_probe_db.map {
         let service_probes: Vec<ServiceProbe> = probes
             .into_iter()
-            .map(|probe| ServiceProbe::from_str(&probe).expect("Invalid service probe format"))
-            .collect();
+            .map(|probe| ServiceProbe::from_str(&probe).context("Invalid service probe format"))
+            .collect::<Result<_>>()?;
         for service_probe in service_probes {
             let port = Port::new(port, service_probe.transport());
             map.entry(port).or_default().push(service_probe);
@@ -80,11 +80,11 @@ pub fn init_port_probe_db() -> Result<()> {
 pub fn init_service_probe_db() -> Result<()> {
     let probe_payload_db: ProbePayloadDb =
         serde_json::from_str(crate::resources::SERVICE_PROBES_JSON)
-            .expect("Invalid service-probes.json format");
+            .context("Invalid service-probes.json format")?;
     let mut service_probe_map: HashMap<ServiceProbe, ProbePayload> = HashMap::new();
     for probe_payload in probe_payload_db.probes {
         let service_probe: ServiceProbe =
-            ServiceProbe::from_str(&probe_payload.id).expect("Invalid service probe format");
+            ServiceProbe::from_str(&probe_payload.id).context("Invalid service probe format")?;
         service_probe_map.insert(service_probe, probe_payload);
     }
     SERVICE_PROBE_DB

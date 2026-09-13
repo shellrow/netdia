@@ -1,14 +1,14 @@
 <script setup lang="ts">
+import { useDiagnosticRun } from "../composables/useDiagnosticRun";
 import {
   ref,
   reactive,
   computed,
   onMounted,
-  onBeforeUnmount,
   nextTick,
 } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { useDiagnosticListeners } from "../composables/useDiagnosticListeners";
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Chart from 'primevue/chart';
@@ -33,6 +33,7 @@ const form = reactive({
 
 const running = ref(false);
 const opId = ref<string | null>(null);
+const run = useDiagnosticRun("traceroute", opId);
 const canceling = ref(false);
 const err = ref<string | null>(null);
 
@@ -118,108 +119,130 @@ async function toTraceSetting(): Promise<TraceSetting> {
   };
 }
 
+let preparing = false;
+let preparationCanceled = false;
+
 async function startTrace() {
+  if (preparing) return;
+  if (!listenersReady.value) {
+    err.value = "Diagnostics are not ready. Reopen this page if initialization failed.";
+    return;
+  }
+  if (running.value || !form.host.trim()) return;
   resetResult();
   canceling.value = false;
   running.value = true;
 
+  let runId: string | undefined;
   try {
+    preparing = true;
+    preparationCanceled = false;
+    runId = await run.begin();
     const setting = await toTraceSetting();
-    await invoke("traceroute", { setting });
+    preparing = false;
+    if (preparationCanceled || !listenersReady.value) return;
+    await invoke("traceroute", { setting, runId });
   } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    if (runId && !run.isLatest(runId)) return;
+    await run.cancel(runId).catch((error) => console.error("Failed to release diagnostic", error));
+    if (!preparationCanceled) err.value = String(e?.message ?? e);
     running.value = false;
+  } finally {
+    if (runId && !run.isLatest(runId)) return;
+    preparing = false;
   }
 }
 
 async function cancelTrace() {
-  if (!running.value) return;
+  preparationCanceled = true;
   canceling.value = true;
   try {
-    await invoke('cancel_traceroute');
-  } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    await run.cancel();
+  } catch (error) {
+    err.value = String(error);
+  } finally {
+    running.value = false;
     canceling.value = false;
   }
 }
 
-let unlistenStart: UnlistenFn | null = null;
-let unlistenProgress: UnlistenFn | null = null;
-let unlistenDone: UnlistenFn | null = null;
-let unlistenError: UnlistenFn | null = null;
-let unlistenCancelled: UnlistenFn | null = null;
+const { listen, dispose, listenersReady } = useDiagnosticListeners();
 
 onMounted(async () => {
-  await nextTick();
+  try {
+    await nextTick();
 
-  // start
-  unlistenStart = await listen("traceroute:start", (ev:any) => {
-    const p = ev?.payload ?? {};
-    opId.value = p.run_id ?? null;
-  });
-
-  // progress: each hop
-  unlistenProgress = await listen("traceroute:progress", (ev: any) => {
-    const hop: TraceHop | undefined = ev?.payload;
-    if (!hop) return;
-
-    hops.value = [...hops.value, hop];
-
-    const current = chartData.value;
-
-    const labels = [...(current.labels ?? []), String(hop.hop)];
-    const data = [
-        ...((current.datasets?.[0].data as (number | null)[] | undefined) ?? []),
-        hop.rtt_ms != null ? hop.rtt_ms : null,
-    ];
-
-    chartData.value = {
-        ...current,
-        labels,
-        datasets: [
-        {
-            ...current.datasets?.[0],
-            data,
-        } as any,
-        ],
-    };
+    // start
+    await listen("traceroute:start", (ev:any) => {
+      const p = ev?.payload ?? {};
+      if (!run.accepts(p.run_id)) return;
     });
 
-  // done
-  unlistenDone = await listen("traceroute:done", (ev: any) => {
-    const payload: TraceDonePayload | undefined = ev?.payload;
-    if (payload) {
-      doneInfo.value = payload;
-    }
-    running.value = false;
-    canceling.value = false;
-  });
+    // progress: each hop
+    await listen("traceroute:progress", (ev: any) => {
+      const hop: TraceHop | undefined = ev?.payload;
+      if (!hop) return;
+      if (!run.accepts(hop.run_id)) return;
 
-  // error
-  unlistenError = await listen("traceroute:error", (ev: any) => {
-    const p = ev?.payload ?? {};
-    if (p.message) {
-      err.value = String(p.message);
-    }
-    running.value = false;
-    canceling.value = false;
-  });
+      hops.value = [...hops.value, hop];
 
-  unlistenCancelled = await listen("traceroute:cancelled", (ev: any) => {
-    if (ev.payload?.run_id === opId.value) {
+      const current = chartData.value;
+
+      const labels = [...(current.labels ?? []), String(hop.hop)];
+      const data = [
+          ...((current.datasets?.[0].data as (number | null)[] | undefined) ?? []),
+          hop.rtt_ms != null ? hop.rtt_ms : null,
+      ];
+
+      chartData.value = {
+          ...current,
+          labels,
+          datasets: [
+          {
+              ...current.datasets?.[0],
+              data,
+          } as any,
+          ],
+      };
+      });
+
+    // done
+    await listen("traceroute:done", (ev: any) => {
+      const payload: TraceDonePayload | undefined = ev?.payload;
+      if (!run.accepts(payload?.run_id)) return;
+      if (payload) {
+        doneInfo.value = payload;
+      }
       running.value = false;
       canceling.value = false;
-    }
-  });
+      run.finish();
+    });
 
-});
+    // error
+    await listen("traceroute:error", (ev: any) => {
+      const p = ev?.payload ?? {};
+      if (!run.accepts(p.run_id)) return;
+      if (p.message) {
+        err.value = String(p.message);
+      }
+      running.value = false;
+      canceling.value = false;
+      run.finish();
+    });
 
-onBeforeUnmount(() => {
-  unlistenStart?.();
-  unlistenProgress?.();
-  unlistenDone?.();
-  unlistenError?.();
-  unlistenCancelled?.();
+    await listen("traceroute:cancelled", (ev: any) => {
+      if (run.accepts(ev.payload?.run_id)) {
+        run.finish();
+        running.value = false;
+        canceling.value = false;
+      }
+    });
+
+    listenersReady.value = true;
+  } catch (error) {
+    dispose();
+    err.value = `Could not initialize diagnostics: ${String(error)}. Reopen this page to retry.`;
+  }
 });
 
 // Whether reached the target. The final result.
@@ -242,11 +265,11 @@ function fmtIp(ip?: string | null) {
 </script>
 
 <template>
-  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
+  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
     <!-- Toolbar -->
     <div
       ref="toolbarRef"
-      class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-3"
+      class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-center gap-3"
     >
       <!-- Left: controls -->
       <div class="flex flex-wrap items-end gap-3 min-w-0">
@@ -276,6 +299,7 @@ function fmtIp(ip?: string | null) {
             class="w-[220px]"
             aria-label="Host or IP address"
             size="small"
+            @keydown.enter.prevent="startTrace"
           />
         </div>
 
@@ -382,7 +406,7 @@ function fmtIp(ip?: string | null) {
                   - RTT: {{ fmtMs(lastHop.rtt_ms as any) }}
                 </div>
               </div>
-              <div v-if="err" class="mt-3 text-red-500 text-sm">
+              <div v-if="err" class="mt-3 text-red-500 text-sm" role="alert">
                 {{ err }}
               </div>
               <div class="text-xs text-surface-500 mt-3">

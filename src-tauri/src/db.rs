@@ -93,7 +93,8 @@ END;
 
 #[derive(Clone)]
 pub struct DatabaseState {
-    db: turso::Database,
+    db: Option<turso::Database>,
+    startup_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,7 +108,7 @@ pub struct UiPreferences {
 impl Default for UiPreferences {
     fn default() -> Self {
         Self {
-            sidebar_compact: true,
+            sidebar_compact: false,
             last_dns_query: "example.com".to_string(),
             public_ip_visible: true,
             hostname_visible: true,
@@ -185,6 +186,14 @@ impl DatabaseState {
     pub async fn initialize() -> Result<Self> {
         let path = crate::fs::get_user_file_path(DEFAULT_DB_FILE_NAME)
             .ok_or_else(|| anyhow!("Failed to resolve application database path"))?;
+        let legacy = crate::fs::get_user_file_path(LEGACY_CONFIG_FILE_NAME);
+        Self::initialize_at(&path, legacy.as_deref()).await
+    }
+
+    async fn initialize_at(
+        path: &std::path::Path,
+        legacy: Option<&std::path::Path>,
+    ) -> Result<Self> {
         let path_str = path
             .to_str()
             .ok_or_else(|| anyhow!("Database path is not valid UTF-8"))?;
@@ -193,15 +202,35 @@ impl DatabaseState {
             .build()
             .await
             .context("Failed to open local Turso database")?;
-        let state = Self { db };
+        let state = Self {
+            db: Some(db),
+            startup_error: None,
+        };
         state.initialize_schema().await?;
-        state.migrate_legacy_config_if_needed().await?;
+        state.migrate_legacy_config_if_needed(legacy).await?;
         state.ensure_default_ui_preferences().await?;
         Ok(state)
     }
 
+    pub fn unavailable(error: String) -> Self {
+        Self {
+            db: None,
+            startup_error: Some(error),
+        }
+    }
+
+    pub fn startup_error(&self) -> Option<&str> {
+        self.startup_error.as_deref()
+    }
+
     fn connect(&self) -> Result<Connection> {
-        let conn = self.db.connect().context("Failed to connect to database")?;
+        let db = self.db.as_ref().ok_or_else(|| {
+            anyhow!(
+                "Saved data is unavailable. Resolve the startup error and restart NetDia. {}",
+                self.startup_error.as_deref().unwrap_or("")
+            )
+        })?;
+        let conn = db.connect().context("Failed to connect to database")?;
         conn.busy_timeout(DB_BUSY_TIMEOUT)
             .context("Failed to configure database busy timeout")?;
         Ok(conn)
@@ -209,6 +238,12 @@ impl DatabaseState {
 
     async fn initialize_schema(&self) -> Result<()> {
         let mut conn = self.connect()?;
+        let version = read_user_version(&conn).await?;
+        if !(0..=CURRENT_SCHEMA_VERSION).contains(&version) {
+            return Err(anyhow!(
+                "Database schema version {version} is not supported by this version of NetDia (maximum {CURRENT_SCHEMA_VERSION})"
+            ));
+        }
         conn.pragma_update("journal_mode", "'wal'")
             .await
             .context("Failed to enable WAL mode")?;
@@ -216,7 +251,6 @@ impl DatabaseState {
             .await
             .context("Failed to enable foreign keys")?;
 
-        let version = read_user_version(&conn).await?;
         self.migrate_schema(&mut conn, version).await?;
         Ok(())
     }
@@ -253,13 +287,15 @@ impl DatabaseState {
         Ok(())
     }
 
-    async fn migrate_legacy_config_if_needed(&self) -> Result<()> {
+    async fn migrate_legacy_config_if_needed(
+        &self,
+        legacy_path: Option<&std::path::Path>,
+    ) -> Result<()> {
         if self.app_config_exists().await? {
             return Ok(());
         }
 
-        let legacy = crate::fs::get_user_file_path(LEGACY_CONFIG_FILE_NAME)
-            .and_then(|path| AppConfig::load_legacy_from_path(&path));
+        let legacy = legacy_path.and_then(AppConfig::load_legacy_from_path);
         let config = legacy.unwrap_or_default();
         self.save_app_config(&config).await?;
         Ok(())
@@ -795,4 +831,124 @@ fn decode_notification_row(row: &turso::Row) -> Result<AppNotification> {
         created_at: row.get(6)?,
         updated_at: row.get(7)?,
     })
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let path =
+                std::env::temp_dir().join(format!("netdia-db-test-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn database(&self) -> PathBuf {
+            self.0.join("netdia.db")
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn corrupt_database_is_not_replaced_with_defaults() {
+        let directory = TestDirectory::new();
+        let path = directory.database();
+        let bytes = vec![0xab; 4096];
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(DatabaseState::initialize_at(&path, None).await.is_err());
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+
+    #[tokio::test]
+    async fn newer_schema_is_rejected_without_migration() {
+        let directory = TestDirectory::new();
+        let path = directory.database();
+        {
+            let db = Builder::new_local(path.to_str().unwrap())
+                .build()
+                .await
+                .unwrap();
+            let conn = db.connect().unwrap();
+            conn.pragma_update("user_version", 99).await.unwrap();
+            conn.execute("CREATE TABLE future_data (value TEXT)", ())
+                .await
+                .unwrap();
+            conn.execute("INSERT INTO future_data VALUES ('preserve me')", ())
+                .await
+                .unwrap();
+        }
+        let error = DatabaseState::initialize_at(&path, None)
+            .await
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("99"));
+        let db = Builder::new_local(path.to_str().unwrap())
+            .build()
+            .await
+            .unwrap();
+        let conn = db.connect().unwrap();
+        assert_eq!(read_user_version(&conn).await.unwrap(), 99);
+        let mut rows = conn
+            .query("SELECT value FROM future_data", ())
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.next()
+                .await
+                .unwrap()
+                .unwrap()
+                .get::<String>(0)
+                .unwrap(),
+            "preserve me"
+        );
+        let mut tables = conn
+            .query(
+                "SELECT name FROM sqlite_master WHERE name = 'app_config'",
+                (),
+            )
+            .await
+            .unwrap();
+        assert!(tables.next().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn recovery_session_rejects_reads_and_writes_to_storage() {
+        let db = DatabaseState::unavailable("Database is locked".into());
+        assert_eq!(db.startup_error(), Some("Database is locked"));
+        assert!(db.load_ui_preferences().await.is_err());
+        assert!(db.save_app_config(&AppConfig::default()).await.is_err());
+        assert!(db
+            .patch_ui_preferences(UiPreferencesPatch {
+                sidebar_compact: Some(true),
+                ..Default::default()
+            })
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn clean_database_can_be_opened_again_with_saved_settings() {
+        let directory = TestDirectory::new();
+        let path = directory.database();
+        {
+            let db = DatabaseState::initialize_at(&path, None).await.unwrap();
+            let config = AppConfig {
+                theme: "light".into(),
+                ..Default::default()
+            };
+            db.save_app_config(&config).await.unwrap();
+        }
+        let db = DatabaseState::initialize_at(&path, None).await.unwrap();
+        assert!(db.startup_error().is_none());
+        assert_eq!(db.load_app_config().await.unwrap().theme, "light");
+    }
 }

@@ -8,7 +8,7 @@ import type {
 } from "../types/preferences";
 
 const DEFAULT_UI_PREFERENCES: UiPreferences = {
-  sidebar_compact: true,
+  sidebar_compact: false,
   last_dns_query: "example.com",
   public_ip_visible: true,
   hostname_visible: true,

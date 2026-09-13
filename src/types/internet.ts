@@ -1,5 +1,5 @@
 export type IpInfo = {
-  ip_version: string;   // "IPv4" | "IPv6" (string as given by API)
+  ip_version: string;   // "v4" | "v6" (normalized by the backend)
   ip_addr_dec: string;
   ip_addr: string;
   host_name: string;

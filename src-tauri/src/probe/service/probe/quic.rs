@@ -49,15 +49,12 @@ impl QuicProbe {
             b"hq-29".as_slice(),
         ];
         let client_cfg = quic_client_config(ctx.skip_cert_verify, &alpn)?;
-        let mut endpoint = Endpoint::client(
-            (if ctx.ip.is_ipv6() {
-                "[::]:0"
-            } else {
-                "0.0.0.0:0"
-            })
-            .parse()
-            .unwrap(),
-        )?;
+        let bind_ip = if ctx.ip.is_ipv6() {
+            std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+        } else {
+            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        };
+        let mut endpoint = Endpoint::client(std::net::SocketAddr::new(bind_ip, 0))?;
         endpoint.set_default_client_config(client_cfg);
 
         // Connect to the server (SNI is hostname or "localhost")
@@ -146,16 +143,15 @@ impl QuicProbe {
                     )
                 };
 
+                let req = Request::builder()
+                    .method(Method::GET)
+                    .uri("https://".to_string() + server_name + "/")
+                    .header("Host", server_name)
+                    .header("User-Agent", DEFAULT_USER_AGENT_CHROME)
+                    .body(())?;
+
                 let request = async move {
                     let mut svc = ServiceInfo::default();
-                    // Simple GET request
-                    let req = Request::builder()
-                        .method(Method::GET)
-                        .uri("https://".to_string() + server_name + "/")
-                        .header("Host", server_name)
-                        .header("User-Agent", DEFAULT_USER_AGENT_CHROME)
-                        .body(())
-                        .unwrap();
 
                     tracing::debug!(
                         "HTTP/3 Probe: {}:{} - Sending request",

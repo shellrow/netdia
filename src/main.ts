@@ -12,9 +12,10 @@ import {
   loadUiPreferences,
   migrateLegacyUiPreferences,
 } from "./composables/useUiPreferences";
+import { loadStartupStatus, useStartupStatus } from "./composables/useStartupStatus";
+import { reportAppError } from "./composables/useAppStatus";
 
 // Components
-import StyleClass from 'primevue/styleclass';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
@@ -78,14 +79,21 @@ const ThemePreset = definePreset(Aura, {
 
 async function bootstrap() {
   try {
+    await loadStartupStatus();
     await loadAppConfig();
-    await loadUiPreferences();
-    await migrateLegacyUiPreferences();
+    if (!useStartupStatus().startupError.value) {
+      await loadUiPreferences();
+      await migrateLegacyUiPreferences();
+    }
   } catch (e) {
-    console.error("Failed to load persisted settings from Tauri:", e);
+    reportAppError(e, "Failed to load saved settings");
   }
 
   const app = createApp(App);
+  app.config.errorHandler = (error, _instance, info) => {
+    reportAppError(error, `Application error (${info})`);
+    console.error(error);
+  };
   app.use(router);
   app.use(PrimeVue, {
       theme: {
@@ -121,10 +129,12 @@ async function bootstrap() {
   app.component('SelectButton', SelectButton);
 
   app.directive('tooltip', Tooltip);
-  app.directive('styleclass', StyleClass);
-
   app.mount('#app');
-  void initializeNotificationsOnStartup();
+  if (!useStartupStatus().startupError.value) void initializeNotificationsOnStartup();
 }
+
+window.addEventListener("unhandledrejection", (event) => {
+  reportAppError(event.reason, "Background operation failed");
+});
 
 void bootstrap();

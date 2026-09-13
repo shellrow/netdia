@@ -1,3 +1,4 @@
+use crate::events::EventEmitter;
 use crate::model::interface::{NetworkInterface, TrafficStats};
 use crate::state::SharedState;
 use anyhow::Result;
@@ -5,7 +6,7 @@ use netdev::ipnet::Ipv4Net;
 use netdev::Interface;
 use std::collections::HashMap;
 use std::time::SystemTime;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 use tokio::sync::MutexGuard;
 
 /// Get list of network interfaces with extended stats
@@ -79,7 +80,7 @@ pub async fn reload_interfaces(
     crate::service::task::reload_interfaces(&state)
         .await
         .map_err(|e| e.to_string())?;
-    let _ = app.emit("interfaces_updated", ());
+    let _ = app.emit_logged("interfaces_updated", ());
     Ok(())
 }
 

@@ -10,12 +10,12 @@ use crate::model::speedtest::{
     SpeedtestDirection, SpeedtestDonePayload, SpeedtestResult, SpeedtestType,
     SpeedtestUpdatePayload,
 };
+use crate::operation::RunEmitter;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use reqwest::{Client, RequestBuilder};
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -173,7 +173,7 @@ fn compute_stable_average(
 }
 
 fn emit_progress_update(
-    app: &AppHandle,
+    app: &RunEmitter<'_>,
     direction: SpeedtestDirection,
     progress: &mut ProgressState,
     transferred: u64,
@@ -212,7 +212,7 @@ fn final_average(progress: &mut ProgressState, transferred: u64) -> (u64, f64) {
 }
 
 async fn run_speedtest_with_server(
-    app: &AppHandle,
+    app: &RunEmitter<'_>,
     client: &Client,
     auth: &SpeedtestAuth,
     direction: SpeedtestDirection,
@@ -241,7 +241,7 @@ async fn run_speedtest_with_server(
 }
 
 pub async fn run_speedtest(
-    app: &AppHandle,
+    app: &RunEmitter<'_>,
     direction: SpeedtestDirection,
     test_type: SpeedtestType,
     target_bytes: u64,
@@ -263,7 +263,7 @@ pub async fn run_speedtest(
 }
 
 async fn download_test(
-    app: &AppHandle,
+    app: &RunEmitter<'_>,
     client: &Client,
     auth: &SpeedtestAuth,
     per_stream_target_bytes: u64,
@@ -388,7 +388,7 @@ async fn download_test(
 }
 
 async fn file_download_test(
-    app: &AppHandle,
+    app: &RunEmitter<'_>,
     client: &Client,
     auth: &SpeedtestAuth,
     per_stream_target_bytes: u64,
@@ -513,7 +513,7 @@ async fn file_download_test(
 }
 
 async fn upload_test(
-    app: &AppHandle,
+    app: &RunEmitter<'_>,
     client: &Client,
     auth: &SpeedtestAuth,
     per_stream_target_bytes: u64,
@@ -646,7 +646,7 @@ async fn upload_test(
 }
 
 fn emit_speedtest_update(
-    app: &AppHandle,
+    app: &RunEmitter<'_>,
     direction: SpeedtestDirection,
     elapsed_ms: u64,
     transferred_bytes: u64,
@@ -668,6 +668,6 @@ fn emit_speedtest_update(
     );
 }
 
-fn emit_speedtest_done(app: &AppHandle, payload: SpeedtestDonePayload) {
+fn emit_speedtest_done(app: &RunEmitter<'_>, payload: SpeedtestDonePayload) {
     let _ = app.emit("speedtest:done", payload);
 }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { useDiagnosticRun } from "../composables/useDiagnosticRun";
+import { ref, computed, onMounted, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { useDiagnosticListeners } from "../composables/useDiagnosticListeners";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
@@ -17,6 +18,7 @@ import { Ipv4Net } from "../types/net";
 import { fmtMs } from "../utils/formatter";
 
 const activeRunId = ref<string | null>(null);
+const run = useDiagnosticRun("neighborscan", activeRunId);
 const running = ref(false);
 const loading = ref(false);
 const canceling = ref(false);
@@ -87,16 +89,29 @@ async function fetchNetworkAddressMap() {
 }
 
 async function startScan() {
+  if (!listenersReady.value) {
+    err.value = "Diagnostics are not ready. Reopen this page if initialization failed.";
+    return;
+  }
+  if (running.value || loading.value) return;
   resetAll();
   running.value = true;
   loading.value = true;
 
+  let runId: string | undefined;
   try {
-    await invoke("neighbor_scan", { ifaceName: selectedIf.value ?? null });
+    runId = await run.begin();
+    await invoke("neighbor_scan", { runId, ifaceName: selectedIf.value ?? null });
   } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    if (runId && !run.isLatest(runId)) return;
+    await run.cancel(runId).catch((error) => console.error("Failed to release diagnostic", error));
+    const message = String(e?.message ?? e);
+    if (!cancelled.value && message.toLowerCase() !== "cancelled") {
+      err.value = message;
+    }
     running.value = false;
   } finally {
+    if (runId && !run.isLatest(runId)) return;
     loading.value = false;
   }
 }
@@ -104,95 +119,94 @@ async function startScan() {
 async function cancelScan() {
   canceling.value = true;
   try {
-    await invoke("cancel_neighborscan");
-  } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    await run.cancel();
+    cancelled.value = true;
+  } catch (error) {
+    err.value = String(error);
   } finally {
+    running.value = false;
     canceling.value = false;
+    loading.value = false;
   }
 }
 
-let unlistenHostProgress: UnlistenFn | null = null;
-let unlistenHostAlive: UnlistenFn | null = null;
-let unlistenNeighborStart: UnlistenFn | null = null;
-let unlistenNeighborDone: UnlistenFn | null = null;
-let unlistenNeighborCancelled: UnlistenFn | null = null;
-let unlistenNeighborError: UnlistenFn | null = null;
+const { listen, dispose, listenersReady } = useDiagnosticListeners();
 
 onMounted(async () => {
-  await nextTick();
+  try {
+    await nextTick();
 
-  unlistenNeighborStart = await listen<NeighborScanStartPayload>("neighborscan:start", (ev) => {
-    const runId = ev?.payload?.run_id;
-    if (runId) activeRunId.value = runId;
-    running.value = true;
-    err.value = null;
-    cancelled.value = false;
-    progressDone.value = 0;
-    progressTotal.value = 0;
-    foundAlive.value = 0;
-  });
+    await listen<NeighborScanStartPayload>("neighborscan:start", (ev) => {
+      const runId = ev?.payload?.run_id;
+      if (!run.accepts(runId)) return;
+      running.value = true;
+      err.value = null;
+      cancelled.value = false;
+      progressDone.value = 0;
+      progressTotal.value = 0;
+      foundAlive.value = 0;
+    });
 
-  unlistenHostProgress = await listen<HostScanProgressPayload>("hostscan:progress", (ev) => {
-    const p = ev?.payload;
-    if (!p) return;
-    if (activeRunId.value && p.run_id && p.run_id !== activeRunId.value) return;
-    progressDone.value = p.done;
-    progressTotal.value = p.total;
-  });
-  
-  unlistenHostAlive = await listen<HostScanProgress>("hostscan:alive", (ev) => {
-    const p = ev?.payload;
-    if (!p) return;
-    if (activeRunId.value && p.run_id && p.run_id !== activeRunId.value) return;
-    foundAlive.value += 1;
-  });
+    await listen<HostScanProgressPayload>("hostscan:progress", (ev) => {
+      const p = ev?.payload;
+      if (!p) return;
+      if (!run.accepts(p.run_id)) return;
+      progressDone.value = p.done;
+      progressTotal.value = p.total;
+    });
 
-  unlistenNeighborDone = await listen<NeighborScanReport>("neighborscan:done", (ev) => {
-    const rep = ev?.payload;
-    if (!rep) return;
-    if (activeRunId.value && rep.run_id && rep.run_id !== activeRunId.value) return;
-    report.value = rep;
-    running.value = false;
-    canceling.value = false;
-  });
+    await listen<HostScanProgress>("hostscan:alive", (ev) => {
+      const p = ev?.payload;
+      if (!p) return;
+      if (!run.accepts(p.run_id)) return;
+      foundAlive.value += 1;
+    });
 
-  unlistenNeighborCancelled = await listen<NeighborScanCancelledPayload>("neighborscan:cancelled", (ev) => {
-    const p = ev?.payload;
-    const runId = p?.run_id;
-    if (activeRunId.value && runId && runId !== activeRunId.value) return;
-    cancelled.value = true;
-    running.value = false;
-    canceling.value = false;
-    loading.value = false;
-  });
+    await listen<NeighborScanReport>("neighborscan:done", (ev) => {
+      const rep = ev?.payload;
+      if (!rep) return;
+      if (!run.accepts(rep.run_id)) return;
+      report.value = rep;
+      running.value = false;
+      canceling.value = false;
+      run.finish();
+    });
 
-  unlistenNeighborError = await listen<NeighborScanErrorPayload>("neighborscan:error", (ev) => {
-    const p = ev?.payload;
-    const runId = p?.run_id;
-    if (activeRunId.value && runId && runId !== activeRunId.value) return;
-    err.value = String(p?.message ?? "neighborscan error");
-    running.value = false;
-    canceling.value = false;
-    loading.value = false;
-  });
+    await listen<NeighborScanCancelledPayload>("neighborscan:cancelled", (ev) => {
+      const p = ev?.payload;
+      const runId = p?.run_id;
+      if (!run.accepts(runId)) return;
+      cancelled.value = true;
+      running.value = false;
+      canceling.value = false;
+      loading.value = false;
+      run.finish();
+    });
 
-  await fetchNetworkAddressMap();
+    await listen<NeighborScanErrorPayload>("neighborscan:error", (ev) => {
+      const p = ev?.payload;
+      const runId = p?.run_id;
+      if (!run.accepts(runId)) return;
+      err.value = String(p?.message ?? "neighborscan error");
+      running.value = false;
+      canceling.value = false;
+      loading.value = false;
+      run.finish();
+    });
+
+    await fetchNetworkAddressMap();
+    listenersReady.value = true;
+  } catch (error) {
+    dispose();
+    err.value = `Could not initialize diagnostics: ${String(error)}. Reopen this page to retry.`;
+  }
 });
 
-onBeforeUnmount(() => {
-  unlistenHostProgress?.();
-  unlistenHostAlive?.();
-  unlistenNeighborStart?.();
-  unlistenNeighborDone?.();
-  unlistenNeighborCancelled?.();
-  unlistenNeighborError?.();
-});
 </script>
 
 <template>
-  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
-    <div ref="toolbarRef" class="grid grid-cols-1 lg:grid-cols-[1fr_auto] items-start gap-3">
+  <div ref="wrapRef" class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0">
+    <div ref="toolbarRef" class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] items-start gap-3">
       <div class="flex items-center gap-3 min-w-0 flex-wrap">
         <div class="text-surface-500 dark:text-surface-400 text-sm">Neighbor Scan</div>
 
@@ -205,6 +219,7 @@ onBeforeUnmount(() => {
           class="min-w-64"
           :disabled="running || loading"
           size="small"
+          aria-label="Network interface"
         />
         <Tag v-if="selectedIf" :value="selectedCidr" class="font-mono" severity="info"/>
         <span v-else class="text-surface-500 text-xs">No eligible interface</span>
@@ -237,7 +252,7 @@ onBeforeUnmount(() => {
           <Card>
             <template #title>Progress</template>
             <template #content>
-              <div class="flex items-center justify-between mb-2 text-sm text-surface-500">
+              <div class="flex items-center justify-between mb-2 text-sm text-surface-500" role="status" aria-live="polite">
                 <div>Scanned: {{ progressDone }} / {{ progressTotal || "-" }}</div>
                 <div>{{ progressPct }}%</div>
               </div>
@@ -252,7 +267,7 @@ onBeforeUnmount(() => {
           <Card>
             <template #title>Neighbors</template>
             <template #content>
-              <div v-if="err" class="text-red-500 text-sm mb-2">{{ err }}</div>
+              <div v-if="err" class="text-red-500 text-sm mb-2" role="alert">{{ err }}</div>
 
               <template v-if="report">
                 <div class="grid grid-cols-2 gap-3 text-sm mb-3">

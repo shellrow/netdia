@@ -1,14 +1,17 @@
+use crate::events::EventEmitter;
 use std::net::IpAddr;
 
 use netdev::Interface;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::model::ping::{PingErrorPayload, PingProtocol, PingSetting, PingStartPayload};
 use crate::operation::OP_PING;
 use crate::probe::ping;
 
 #[tauri::command]
-pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<(), String> {
+pub async fn ping(app: AppHandle, run_id: String, setting: PingSetting) -> Result<(), String> {
+    let operation = crate::operation::claim_op(OP_PING, &run_id)?;
+    super::validation::validate_ping(&setting)?;
     let default_interface: Interface = netdev::get_default_interface()
         .map_err(|e| format!("Failed to get default interface: {}", e))?;
     let src_ip = match setting.ip_addr {
@@ -31,11 +34,10 @@ pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<(), String> {
             IpAddr::V6(ipv6)
         }
     };
-    let run_id = uuid::Uuid::new_v4().to_string();
 
-    let token = crate::operation::start_op(OP_PING);
+    let token = operation.token.clone();
 
-    let _ = app.emit(
+    let _ = app.emit_logged(
         "ping:start",
         PingStartPayload {
             run_id: run_id.clone(),
@@ -44,22 +46,37 @@ pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<(), String> {
     );
 
     tauri::async_runtime::spawn(async move {
-        let res = match setting.protocol {
-            PingProtocol::Icmp => {
-                ping::icmp::icmp_ping(&app, &run_id, src_ip, setting, token).await
+        let _operation = operation;
+        let cancellation = token.clone();
+        let work = async {
+            match setting.protocol {
+                PingProtocol::Icmp => {
+                    ping::icmp::icmp_ping(&app, &run_id, src_ip, setting, token).await
+                }
+                PingProtocol::Tcp => {
+                    ping::tcp::tcp_ping(&app, &run_id, src_ip, setting, token).await
+                }
+                PingProtocol::Udp => {
+                    ping::udp::udp_ping_icmp_unreach(&app, &run_id, src_ip, setting, token).await
+                }
+                PingProtocol::Quic => {
+                    ping::quic::quic_ping(&app, &run_id, src_ip, setting, token).await
+                }
+                PingProtocol::Http => ping::http::http_ping(&app, &run_id, setting, token).await,
             }
-            PingProtocol::Tcp => ping::tcp::tcp_ping(&app, &run_id, src_ip, setting, token).await,
-            PingProtocol::Udp => {
-                ping::udp::udp_ping_icmp_unreach(&app, &run_id, src_ip, setting, token).await
-            }
-            PingProtocol::Quic => {
-                ping::quic::quic_ping(&app, &run_id, src_ip, setting, token).await
-            }
-            PingProtocol::Http => ping::http::http_ping(&app, &run_id, setting, token).await,
+        };
+        let res = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(anyhow::anyhow!("cancelled")),
+            result = work => result,
         };
 
         if let Err(e) = res {
-            let _ = app.emit(
+            if cancellation.is_cancelled() {
+                let _ = app.emit_logged("ping:cancelled", serde_json::json!({ "run_id": run_id }));
+                return;
+            }
+            let _ = app.emit_logged(
                 "ping:error",
                 PingErrorPayload {
                     run_id: run_id.clone(),
@@ -73,6 +90,6 @@ pub async fn ping(app: AppHandle, setting: PingSetting) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn cancel_ping() -> bool {
-    crate::operation::cancel_op(OP_PING)
+pub async fn cancel_ping(run_id: String) -> bool {
+    crate::operation::cancel_op(OP_PING, &run_id).await
 }

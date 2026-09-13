@@ -41,15 +41,12 @@ impl AsyncQuicSocket {
     /// Create an asynchronous QUIC socket from the given configuration.
     pub fn from_config(config: &QuicConfig) -> Result<Self> {
         let client_cfg = quic_client_config(config.skip_verify, &config.alpn)?;
-        let mut endpoint = QuinnEndpoint::client(
-            (if config.family.is_v6() {
-                "[::]:0"
-            } else {
-                "0.0.0.0:0"
-            })
-            .parse()
-            .unwrap(),
-        )?;
+        let bind_ip = if config.family.is_v6() {
+            std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+        } else {
+            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        };
+        let mut endpoint = QuinnEndpoint::client(SocketAddr::new(bind_ip, 0))?;
         endpoint.set_default_client_config(client_cfg);
         Ok(Self { inner: endpoint })
     }

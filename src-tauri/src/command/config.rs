@@ -23,11 +23,10 @@ pub async fn reload_config(
     state: State<'_, ConfigState>,
     db: State<'_, DatabaseState>,
 ) -> Result<AppConfig, String> {
+    let mut write = state.0.write().await;
     let cfg = db.load_app_config().await.map_err(|e| e.to_string())?;
-    {
-        let mut write = state.0.write().await;
-        *write = cfg.clone();
-    }
+    super::validation::validate_config(&cfg)?;
+    *write = cfg.clone();
     Ok(cfg)
 }
 
@@ -37,12 +36,11 @@ pub async fn save_config(
     db: State<'_, DatabaseState>,
     cfg: AppConfig,
 ) -> Result<(), String> {
-    // Persist to disk + update in-memory
+    super::validation::validate_config(&cfg)?;
+    // Serialize persistence with replacement so memory cannot lag behind disk.
+    let mut write = state.0.write().await;
     db.save_app_config(&cfg).await.map_err(|e| e.to_string())?;
-    {
-        let mut write = state.0.write().await;
-        *write = cfg;
-    }
+    *write = cfg;
     Ok(())
 }
 

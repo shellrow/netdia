@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from "vue";
+import { useDiagnosticRun } from "../composables/useDiagnosticRun";
+import { ref, reactive, computed, onMounted, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { useDiagnosticListeners } from "../composables/useDiagnosticListeners";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
 import Textarea from "primevue/textarea";
@@ -31,6 +32,7 @@ const form = reactive({
 });
 
 const activeRunId = ref<string | null>(null);
+const run = useDiagnosticRun("hostscan", activeRunId);
 const running = ref(false);
 const loading = ref(false);
 const canceling = ref(false);
@@ -102,164 +104,181 @@ async function refreshTargetPreview() {
   );
 }
 
-async function startScan() {
-  resetResult();
+let preparing = false;
+let preparationCanceled = false;
 
-  const preview = await invoke<HostScanTargetPreview>("preview_host_scan_targets", {
-    mode: form.mode,
-    cidr: form.cidr,
-    list: form.list,
-    maxExpand: MAX_EXPAND,
-  });
-  targetPreview.value = preview;
-  const targets = preview.targets;
-  if (targets.length === 0) {
-    err.value =
-      preview.exceeds_limit
-        ? `Target too large (${preview.estimated_count} hosts). Please use a narrower CIDR or increase the limit.`
-        : "No targets. Add CIDR or IP list.";
+async function startScan() {
+  if (!listenersReady.value) {
+    err.value = "Diagnostics are not ready. Reopen this page if initialization failed.";
     return;
   }
-
+  if (!canStart.value || running.value || preparing) return;
+  resetResult();
   running.value = true;
   loading.value = true;
+  preparing = true;
+  preparationCanceled = false;
 
-  const setting: HostScanRequest = {
-    targets,
-    hop_limit: form.hop_limit,
-    timeout_ms: form.timeout_ms,
-    count: form.count,
-    payload: form.payload || null,
-    ordered: form.ordered,
-    concurrency: form.concurrency || null,
-  };
-
+  let runId: string | undefined;
   try {
-    await invoke("host_scan", { setting });
+    runId = await run.begin();
+    const preview = await invoke<HostScanTargetPreview>("preview_host_scan_targets", {
+      mode: form.mode,
+      cidr: form.cidr,
+      list: form.list,
+      maxExpand: MAX_EXPAND,
+    });
+    preparing = false;
+    if (preparationCanceled || !listenersReady.value) return;
+    targetPreview.value = preview;
+    if (preview.targets.length === 0) {
+      await run.cancel(runId);
+      err.value = preview.exceeds_limit
+        ? `Target too large (${preview.estimated_count} hosts). Use a narrower CIDR or fewer targets.`
+        : "No targets. Add CIDR or IP list.";
+      return;
+    }
+    const setting: HostScanRequest = {
+      targets: preview.targets,
+      hop_limit: form.hop_limit,
+      timeout_ms: form.timeout_ms,
+      count: form.count,
+      payload: form.payload || null,
+      ordered: form.ordered,
+      concurrency: form.concurrency || null,
+    };
+    await invoke("host_scan", { setting, runId });
   } catch (e: any) {
-    err.value = String(e?.message ?? e);
-    running.value = false;
+    if (runId && !run.isLatest(runId)) return;
+    await run.cancel(runId).catch((error) => console.error("Failed to release diagnostic", error));
+    const message = String(e?.message ?? e);
+    if (!cancelled.value && message.toLowerCase() !== "cancelled") {
+      err.value = message;
+    }
   } finally {
+    if (runId && !run.isLatest(runId)) return;
+    preparing = false;
+    running.value = false;
     loading.value = false;
   }
 }
 
 async function cancelScan() {
+  preparationCanceled = true;
   canceling.value = true;
   try {
-    await invoke("cancel_hostscan");
-  } catch (e: any) {
-    err.value = String(e?.message ?? e);
+    await run.cancel();
+    cancelled.value = true;
+  } catch (error) {
+    err.value = String(error);
   } finally {
+    running.value = false;
     canceling.value = false;
+    loading.value = false;
   }
 }
 
-let unlistenStart: UnlistenFn | null = null;
-let unlistenProgress: UnlistenFn | null = null;
-let unlistenAlive: UnlistenFn | null = null;
-let unlistenDone: UnlistenFn | null = null;
-let unlistenCancelled: UnlistenFn | null = null;
-let unlistenError: UnlistenFn | null = null;
+const { listen, dispose, listenersReady } = useDiagnosticListeners();
 
 onMounted(async () => {
-  await refreshTargetPreview();
-  unlistenStart = await listen<HostScanStartPayload>("hostscan:start", (ev) => {
-    const runId = ev?.payload?.run_id;
-    if (runId) activeRunId.value = runId;
-    progressDone.value = 0;
-    progressTotal.value = 0;
-  });
+  try {
+    await refreshTargetPreview();
+    await listen<HostScanStartPayload>("hostscan:start", (ev) => {
+      const runId = ev?.payload?.run_id;
+      if (!run.accepts(runId)) return;
+      progressDone.value = 0;
+      progressTotal.value = 0;
+    });
 
-  unlistenProgress = await listen<HostScanProgressPayload>("hostscan:progress", (ev) => {
-    const p = ev?.payload;
-    if (!p) return;
-    if (activeRunId.value && p.run_id && p.run_id !== activeRunId.value) return;
-    progressDone.value = p.done;
-    progressTotal.value = p.total;
-  });
+    await listen<HostScanProgressPayload>("hostscan:progress", (ev) => {
+      const p = ev?.payload;
+      if (!p) return;
+      if (!run.accepts(p.run_id)) return;
+      progressDone.value = p.done;
+      progressTotal.value = p.total;
+    });
 
-  unlistenAlive = await listen<HostScanProgress>("hostscan:alive", (ev) => {
-    const p = ev?.payload;
-    if (!p) return;
-    if (activeRunId.value && p.run_id && p.run_id !== activeRunId.value) return;
+    await listen<HostScanProgress>("hostscan:alive", (ev) => {
+      const p = ev?.payload;
+      if (!p) return;
+      if (!run.accepts(p.run_id)) return;
 
-    aliveRows.value = [
-      ...aliveRows.value,
-      {
-        ip: String(p.ip_addr),
-        rtt: p.rtt_ms ?? null,
-      },
-    ];
-  });
+      aliveRows.value = [
+        ...aliveRows.value,
+        {
+          ip: String(p.ip_addr),
+          rtt: p.rtt_ms ?? null,
+        },
+      ];
+    });
 
-  unlistenDone = await listen<HostScanReport>("hostscan:done", (ev) => {
-    const rep = ev?.payload;
-    if (!rep) return;
-    if (activeRunId.value && rep.run_id && rep.run_id !== activeRunId.value) return;
+    await listen<HostScanReport>("hostscan:done", (ev) => {
+      const rep = ev?.payload;
+      if (!rep) return;
+      if (!run.accepts(rep.run_id)) return;
 
-    report.value = rep;
-    aliveRows.value = rep.alive.map(([host, rtt]) => ({
-      ip: String(host.ip),
-      hostname: host.hostname,
-      rtt,
-    }));
+      report.value = rep;
+      aliveRows.value = rep.alive.map(([host, rtt]) => ({
+        ip: String(host.ip),
+        hostname: host.hostname,
+        rtt,
+      }));
 
-    running.value = false;
-    loading.value = false;
-    canceling.value = false;
-  });
+      running.value = false;
+      loading.value = false;
+      canceling.value = false;
+      run.finish();
+    });
 
-  unlistenCancelled = await listen<HostScanCancelledPayload>("hostscan:cancelled", (ev) => {
-    const p = ev?.payload;
-    const runId = p?.run_id;
-    if (activeRunId.value && runId && runId !== activeRunId.value) return;
+    await listen<HostScanCancelledPayload>("hostscan:cancelled", (ev) => {
+      const p = ev?.payload;
+      const runId = p?.run_id;
+      if (!run.accepts(runId)) return;
 
-    cancelled.value = true;
-    running.value = false;
-    loading.value = false;
-    canceling.value = false;
-  });
+      cancelled.value = true;
+      running.value = false;
+      loading.value = false;
+      canceling.value = false;
+      run.finish();
+    });
 
-  unlistenError = await listen<HostScanErrorPayload>("hostscan:error", (ev) => {
-    const p = ev?.payload;
-    const runId = p?.run_id;
-    if (activeRunId.value && runId && runId !== activeRunId.value) return;
+    await listen<HostScanErrorPayload>("hostscan:error", (ev) => {
+      const p = ev?.payload;
+      const runId = p?.run_id;
+      if (!run.accepts(runId)) return;
 
-    err.value = String(p?.message ?? "hostscan error");
-    running.value = false;
-    loading.value = false;
-    canceling.value = false;
-  });
+      err.value = String(p?.message ?? "hostscan error");
+      running.value = false;
+      loading.value = false;
+      canceling.value = false;
+      run.finish();
+    });
+    listenersReady.value = true;
+  } catch (error) {
+    dispose();
+    err.value = `Could not initialize diagnostics: ${String(error)}. Reopen this page to retry.`;
+  }
 });
 
 watch(
   () => [form.mode, form.cidr, form.list],
   () => {
-    void refreshTargetPreview();
+    void refreshTargetPreview().catch((error) => { err.value = String(error); });
   },
   { immediate: false },
 );
 
-onBeforeUnmount(() => {
-  unlistenStart?.();
-  unlistenProgress?.();
-  unlistenAlive?.();
-  unlistenDone?.();
-  unlistenCancelled?.();
-  unlistenError?.();
-});
 </script>
 
 <template>
   <div
     ref="wrapRef"
-    class="px-3 pt-3 pb-0 lg:px-4 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
+    class="px-3 pt-3 pb-0 lg:px-5 lg:pt-4 lg:pb-0 flex flex-col gap-3 h-full min-h-0"
   >
     <!-- Toolbar -->
     <div
       ref="toolbarRef"
-      class="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-center"
+      class="nd-page-toolbar grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-center"
     >
       <div class="flex items-end gap-3 min-w-0 flex-wrap">
         <!-- Mode -->
@@ -273,6 +292,7 @@ onBeforeUnmount(() => {
             ]"
             optionLabel="label"
             optionValue="value"
+            aria-label="Target input mode"
             class="min-w-40"
             size="small"
           />
@@ -284,13 +304,15 @@ onBeforeUnmount(() => {
           <InputText
             v-model="form.cidr"
             placeholder="e.g. 192.168.1.0/24"
+            aria-label="IPv4 CIDR range"
+            @keydown.enter.prevent="startScan"
             class="w-[220px]"
             size="small"
           />
         </div>
         <div v-else class="flex flex-col gap-1">
           <label class="text-xs text-surface-500">Host List (newline / space / comma)</label>
-          <Textarea v-model="form.list" rows="2" class="w-[280px]" size="small" />
+          <Textarea v-model="form.list" rows="2" class="w-[280px]" size="small" aria-label="Host or IP address list" />
         </div>
 
         <!-- Options -->
@@ -303,6 +325,7 @@ onBeforeUnmount(() => {
             :step="100"
             inputClass="w-[120px]"
             size="small"
+            aria-label="Timeout in milliseconds"
           />
         </div>
         <div class="flex flex-col gap-1">
@@ -313,6 +336,7 @@ onBeforeUnmount(() => {
             :max="255"
             inputClass="w-[120px]"
             size="small"
+            aria-label="Hop limit"
           />
         </div>
 
@@ -356,7 +380,7 @@ onBeforeUnmount(() => {
           <Card>
             <template #title>Progress</template>
             <template #content>
-              <div class="flex items-center justify-between mb-2 text-sm text-surface-500">
+              <div class="flex items-center justify-between mb-2 text-sm text-surface-500" role="status" aria-live="polite">
                 <div>Scanned: {{ progressDone }} / {{ progressTotal || "-" }}</div>
                 <div>{{ progressPct }}%</div>
               </div>
@@ -372,7 +396,7 @@ onBeforeUnmount(() => {
           <Card>
             <template #title>Summary</template>
             <template #content>
-              <div v-if="err" class="text-red-500 text-sm mb-2">
+              <div v-if="err" class="text-red-500 text-sm mb-2" role="alert">
                 {{ err }}
               </div>
 
