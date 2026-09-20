@@ -24,9 +24,9 @@ const DEFAULT_BASE_TARGET_UDP_PORT: u16 = 33435;
 
 /// Check if the ICMP message is Port Unreachable
 fn is_port_unreach_v4(icmp_bytes: &[u8]) -> bool {
-    if let Some(ip) = Ipv4Packet::from_buf(icmp_bytes) {
+    if let Ok(ip) = Ipv4Packet::try_from_buf(icmp_bytes) {
         if ip.header.next_level_protocol == IpNextProtocol::Icmp {
-            if let Some(icmp) = IcmpPacket::from_bytes(ip.payload()) {
+            if let Ok(icmp) = IcmpPacket::try_from_bytes(ip.payload()) {
                 match icmp.header.icmp_type {
                     IcmpType::DestinationUnreachable => {
                         return true;
@@ -42,7 +42,7 @@ fn is_port_unreach_v4(icmp_bytes: &[u8]) -> bool {
 /// Check if the ICMPv6 message is Port Unreachable
 /// The IPv6 header is automatically cropped off when recvfrom() is used.
 fn is_port_unreach_v6(icmp_bytes: &[u8]) -> bool {
-    if let Some(icmp6) = Icmpv6Packet::from_buf(icmp_bytes) {
+    if let Ok(icmp6) = Icmpv6Packet::try_from_buf(icmp_bytes) {
         match icmp6.header.icmpv6_type {
             Icmpv6Type::DestinationUnreachable => {
                 return true;

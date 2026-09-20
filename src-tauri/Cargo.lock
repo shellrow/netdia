@@ -3283,28 +3283,6 @@ dependencies = [
 
 [[package]]
 name = "netdev"
-version = "0.41.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "395f1acaf7a073f756fc22068e0b526d2cf22d09f5e13802b516ef8eeaeee5eb"
-dependencies = [
- "block2",
- "dispatch2",
- "dlopen2",
- "ipnet",
- "libc",
- "mac-addr",
- "netlink-packet-core 0.8.1",
- "netlink-packet-route 0.29.0",
- "netlink-sys 0.8.8",
- "objc2-core-foundation",
- "objc2-system-configuration",
- "once_cell",
- "plist",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "netdev"
 version = "0.46.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3c52c2584961c68f5a6e3356797344061f818c93b8acc9cd6d7e284795e563e"
@@ -3352,7 +3330,7 @@ dependencies = [
  "ndb-oui",
  "ndb-tcp-service",
  "ndb-udp-service",
- "netdev 0.46.3",
+ "netdev",
  "netlink-packet-core 0.8.1",
  "netlink-packet-route 0.25.1",
  "netlink-sys 0.8.8",
@@ -3421,18 +3399,6 @@ name = "netlink-packet-route"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ec2f5b6839be2a19d7fa5aab5bc444380f6311c2b693551cb80f45caaa7b5ef"
-dependencies = [
- "bitflags 2.11.1",
- "libc",
- "log",
- "netlink-packet-core 0.8.1",
-]
-
-[[package]]
-name = "netlink-packet-route"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df9854ea6ad14e3f4698a7f03b65bce0833dd2d81d594a0e4a984170537146b6"
 dependencies = [
  "bitflags 2.11.1",
  "libc",
@@ -3561,33 +3527,32 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nex-core"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78aeccf280d4b2fbe0f9410a7660bc3f359e66c25d249c624a96927ace1e71b8"
+checksum = "3bb153ce079223763d86c20056909143030e2732c8e549ce3f58da4b524ed49d"
 dependencies = [
  "ipnet",
  "libc",
  "mac-addr",
- "netdev 0.41.0",
+ "netdev",
  "nex-sys",
 ]
 
 [[package]]
 name = "nex-packet"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78d015df55124948ff581afd2cd9c0f378e6a1cb789f9ca55fc722a05fc3a6a4"
+checksum = "a5d7e14c332b69cbf734e5d4449e7b03f0cf307e263cb54a55526b70afaa91ff"
 dependencies = [
  "bytes",
  "nex-core",
- "rand 0.8.6",
 ]
 
 [[package]]
 name = "nex-sys"
-version = "0.26.0"
+version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8a60bc1b8dfcb8dee3408955336986b3bd67400499498c55985019095f329c0"
+checksum = "848d3bed1b2c1fa09f4d7bf1a0746a0db58ecb52b103033205ce87dee48a9ba4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -3879,28 +3844,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "objc2-security"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "709fe137109bd1e8b5a99390f77a7d8b2961dafc1a1c5db8f2e60329ad6d895a"
-dependencies = [
- "bitflags 2.11.1",
- "objc2",
- "objc2-core-foundation",
-]
-
-[[package]]
 name = "objc2-system-configuration"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7216bd11cbda54ccabcab84d523dc93b858ec75ecfb3a7d89513fa22464da396"
 dependencies = [
  "bitflags 2.11.1",
- "dispatch2",
- "libc",
- "objc2",
  "objc2-core-foundation",
- "objc2-security",
 ]
 
 [[package]]
