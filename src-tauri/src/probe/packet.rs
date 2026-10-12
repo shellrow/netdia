@@ -25,14 +25,14 @@ pub fn build_icmp_echo_bytes(
             .icmp_code(icmp::echo_request::IcmpCodes::NoCode)
             .payload(Bytes::copy_from_slice(payload))
             .echo_fields(id, seq)
-            .build()
+            .build()?
             .to_bytes()),
         (IpAddr::V6(s), IpAddr::V6(d)) => Ok(Icmpv6PacketBuilder::new(s, d)
             .icmpv6_type(Icmpv6Type::EchoRequest)
             .icmpv6_code(icmpv6::echo_request::Icmpv6Codes::NoCode)
             .payload(Bytes::copy_from_slice(payload))
             .echo_fields(id, seq)
-            .build()
+            .build()?
             .to_bytes()),
         _ => anyhow::bail!("source and destination IP versions do not match"),
     }
@@ -43,7 +43,7 @@ pub fn parse_icmp_echo_v4(buf: &[u8]) -> Option<IcmpEchoReplyPacket> {
     let outer;
     let payload;
     let bytes = if buf.first().is_some_and(|byte| byte >> 4 == 4) {
-        outer = Ipv4Packet::from_buf(buf)?;
+        outer = Ipv4Packet::try_from_buf(buf).ok()?;
         if outer.header.next_level_protocol != nex_packet::ip::IpNextProtocol::Icmp {
             return None;
         }
@@ -56,13 +56,13 @@ pub fn parse_icmp_echo_v4(buf: &[u8]) -> Option<IcmpEchoReplyPacket> {
     if bytes.first() != Some(&0) || bytes.get(1) != Some(&0) {
         return None;
     }
-    IcmpEchoReplyPacket::try_from(IcmpPacket::from_buf(bytes)?).ok()
+    IcmpEchoReplyPacket::try_from(IcmpPacket::try_from_buf(bytes).ok()?).ok()
 }
 
 /// Extract id/seq of ICMPv6 Echo Reply. (ICMPv6 Header only)
 /// The IPv6 header is automatically cropped off when recvfrom() is used.
 pub fn parse_icmp_echo_v6(buf: &[u8]) -> Option<Icmpv6EchoReplyPacket> {
-    let reply = Icmpv6EchoReplyPacket::from_buf(buf)?;
+    let reply = Icmpv6EchoReplyPacket::try_from_buf(buf).ok()?;
     if reply.header.icmpv6_type == Icmpv6Type::EchoReply && buf.get(1) == Some(&0) {
         Some(reply)
     } else {
@@ -91,7 +91,7 @@ pub fn match_trace_reply(dst: IpAddr, from: IpAddr, buf: &[u8], id: u16, seq: u1
     let outer;
     let payload;
     let icmp = if dst.is_ipv4() {
-        outer = Ipv4Packet::from_buf(buf)?;
+        outer = Ipv4Packet::try_from_buf(buf).ok()?;
         if outer.header.next_level_protocol != nex_packet::ip::IpNextProtocol::Icmp {
             return None;
         }
