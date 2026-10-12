@@ -14,7 +14,7 @@ pub async fn lookup_host(host: &str) -> Result<Host, String> {
     super::validation::validate_host(host, "host")?;
     crate::net::dns::lookup_host(host, std::time::Duration::from_secs(5))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
