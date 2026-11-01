@@ -3,7 +3,7 @@ use crate::{
     model::{
         ping::{PingProtocol, PingSetting},
         scan::{HostScanRequest, PortScanSetting, TargetPortsPreset},
-        speedtest::SpeedtestSetting,
+        speedtest::{SpeedtestDirection, SpeedtestSetting, SpeedtestType},
         trace::TracerouteSetting,
     },
 };
@@ -149,6 +149,14 @@ pub fn validate_host_scan(setting: &HostScanRequest) -> Result<(), String> {
 }
 
 pub fn validate_speedtest(setting: &SpeedtestSetting) -> Result<(), String> {
+    if setting.test_type == SpeedtestType::FileDownload {
+        if matches!(setting.direction, SpeedtestDirection::Upload) {
+            return Err("File tests only support downloads".into());
+        }
+        if crate::net::speedtest::size_label_for_bytes(setting.target_bytes).is_none() {
+            return Err("Unsupported file-download size".into());
+        }
+    }
     if !(102_400..=MAX_SPEEDTEST_BYTES).contains(&setting.target_bytes) {
         return Err(format!(
             "target_bytes must be between 102400 and {MAX_SPEEDTEST_BYTES}"
@@ -258,6 +266,23 @@ mod tests {
             concurrency: Some(MAX_HOST_SCAN_CONCURRENCY + 1),
         };
         assert!(validate_host_scan(&setting).is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_file_tests_before_requesting_a_token() {
+        let mut setting = SpeedtestSetting {
+            direction: SpeedtestDirection::Upload,
+            test_type: SpeedtestType::FileDownload,
+            target_bytes: 102_400,
+            max_duration_ms: None,
+        };
+        assert!(validate_speedtest(&setting).is_err());
+        setting.direction = SpeedtestDirection::Download;
+        assert!(validate_speedtest(&setting).is_ok());
+        setting.target_bytes = 200_000;
+        assert!(validate_speedtest(&setting).is_err());
+        setting.test_type = SpeedtestType::ByteStream;
+        assert!(validate_speedtest(&setting).is_ok());
     }
 
     #[test]

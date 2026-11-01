@@ -7,54 +7,30 @@ use std::{
 };
 
 use crate::model::speedtest::{
-    SpeedtestDirection, SpeedtestDonePayload, SpeedtestResult, SpeedtestType,
+    SpeedtestDirection, SpeedtestDonePayload, SpeedtestResult, SpeedtestSetting, SpeedtestType,
     SpeedtestUpdatePayload,
 };
 use crate::operation::RunEmitter;
-use anyhow::{Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use bytes::Bytes;
-use futures_util::StreamExt;
-use reqwest::{Client, RequestBuilder};
+use futures_util::{stream::FuturesUnordered, StreamExt};
+use rand::RngCore;
+use reqwest::{header, Client, Response, StatusCode};
 use serde::Deserialize;
-use tokio::task::JoinSet;
-use tokio_util::sync::CancellationToken;
 
 const FOCTAL_SPEEDTEST_BASE_URL: &str = "https://speed.foctal.com";
 pub(crate) const MAX_DURATION: Duration = Duration::from_secs(30);
+const TOKEN_TIMEOUT: Duration = Duration::from_secs(5);
 const TICK: Duration = Duration::from_millis(250);
 const CHUNK_SIZE: usize = 64 * 1024;
-const WARMUP: Duration = Duration::from_millis(750);
 
 #[derive(Deserialize)]
 struct TokenResp {
     token: String,
-    #[allow(dead_code)]
     expires_in: i64,
 }
 
-#[derive(Clone)]
 struct SpeedtestAuth(String);
-
-/// State for upload stream
-#[derive(Clone)]
-struct UpState {
-    remaining: u64,
-    cancel: CancellationToken,
-}
-
-#[derive(Clone, Copy)]
-struct StableAverage {
-    elapsed: Duration,
-    transferred_bytes: u64,
-}
-
-struct ProgressState {
-    start: Instant,
-    last_tick: Instant,
-    last_bytes: u64,
-    warmup_elapsed: Option<Duration>,
-    warmup_bytes: u64,
-}
 
 fn mbps(bytes: u64, secs: f64) -> f64 {
     if secs <= 0.0 {
@@ -64,28 +40,45 @@ fn mbps(bytes: u64, secs: f64) -> f64 {
     }
 }
 
-async fn get_token(client: &Client) -> Result<String> {
-    let url = format!("{}/token", FOCTAL_SPEEDTEST_BASE_URL);
-    let resp = client.get(url).send().await.context("GET /token")?;
-    if !resp.status().is_success() {
-        anyhow::bail!("token http {}", resp.status());
+fn check_status(response: &Response, operation: &str) -> Result<()> {
+    match response.status() {
+        StatusCode::OK => Ok(()),
+        StatusCode::TOO_MANY_REQUESTS => {
+            let seconds = response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(60);
+            bail!("{operation}: rate limited; retry after {seconds} seconds")
+        }
+        StatusCode::UNAUTHORIZED => {
+            bail!("{operation}: authorization expired or was rejected; start a new test")
+        }
+        StatusCode::PAYLOAD_TOO_LARGE => {
+            bail!("{operation}: the server rejected this upload size; select a smaller size")
+        }
+        status => bail!("{operation}: HTTP {status}"),
     }
-    let tr: TokenResp = resp.json().await.context("parse token json")?;
-    Ok(tr.token)
 }
 
-fn apply_upload_auth(builder: RequestBuilder, auth: &SpeedtestAuth) -> RequestBuilder {
-    builder.bearer_auth(&auth.0)
+async fn get_token(client: &Client, base_url: &str) -> Result<SpeedtestAuth> {
+    let response = client
+        .get(format!("{base_url}/token"))
+        .timeout(TOKEN_TIMEOUT)
+        .send()
+        .await
+        .context("GET /token")?;
+    check_status(&response, "Token request")?;
+    let token: TokenResp = response.json().await.context("parse token JSON")?;
+    ensure!(
+        !token.token.is_empty() && token.expires_in >= 5,
+        "Server returned an empty or nearly expired token"
+    );
+    Ok(SpeedtestAuth(token.token))
 }
 
-fn build_download_url(target_bytes: u64, auth: &SpeedtestAuth) -> String {
-    let mut url = format!("{FOCTAL_SPEEDTEST_BASE_URL}/__down?bytes={target_bytes}");
-    url.push_str("&token=");
-    url.push_str(&auth.0);
-    url
-}
-
-fn size_label_for_bytes(target_bytes: u64) -> Option<&'static str> {
+pub(crate) fn size_label_for_bytes(target_bytes: u64) -> Option<&'static str> {
     match target_bytes {
         102_400 => Some("100kb"),
         1_048_576 => Some("1mb"),
@@ -97,31 +90,20 @@ fn size_label_for_bytes(target_bytes: u64) -> Option<&'static str> {
     }
 }
 
-fn build_file_download_url(target_bytes: u64, auth: &SpeedtestAuth) -> Result<String> {
-    let size = size_label_for_bytes(target_bytes).context("unsupported file-download size")?;
-
-    let mut url = format!("{FOCTAL_SPEEDTEST_BASE_URL}/__filedown/random/{size}");
-    url.push_str("?token=");
-    url.push_str(&auth.0);
-    Ok(url)
-}
-
-fn build_upload_url(auth: &SpeedtestAuth) -> String {
-    let mut url = format!("{FOCTAL_SPEEDTEST_BASE_URL}/__up");
-    url.push_str("?token=");
-    url.push_str(&auth.0);
-    url
-}
-
 fn build_client(max_duration: Duration) -> Result<Client> {
     Client::builder()
-        .timeout(max_duration + Duration::from_secs(5))
+        .timeout(max_duration.max(TOKEN_TIMEOUT))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd()
         .build()
-        .context("build reqwest client")
+        .context("build speed test client")
 }
 
 fn parallel_streams(
-    direction: SpeedtestDirection,
+    direction: &SpeedtestDirection,
     test_type: SpeedtestType,
     target_bytes: u64,
 ) -> usize {
@@ -134,114 +116,219 @@ fn parallel_streams(
     }
 }
 
-fn total_target_bytes(per_stream_target: u64, streams: usize) -> u64 {
-    per_stream_target.saturating_mul(streams as u64)
-}
-
-fn init_progress() -> ProgressState {
-    let start = Instant::now();
-    ProgressState {
-        start,
-        last_tick: start,
-        last_bytes: 0,
-        warmup_elapsed: None,
-        warmup_bytes: 0,
-    }
-}
-
-fn compute_stable_average(
-    progress: &mut ProgressState,
-    transferred: u64,
-    elapsed: Duration,
-) -> StableAverage {
-    if progress.warmup_elapsed.is_none() && elapsed >= WARMUP {
-        progress.warmup_elapsed = Some(elapsed);
-        progress.warmup_bytes = transferred;
-    }
-
-    if let Some(baseline) = progress
-        .warmup_elapsed
-        .filter(|baseline| elapsed > *baseline)
-    {
-        StableAverage {
-            elapsed: elapsed - baseline,
-            transferred_bytes: transferred.saturating_sub(progress.warmup_bytes),
-        }
-    } else {
-        // A completed short transfer may have no samples after warm-up.
-        StableAverage {
-            elapsed,
-            transferred_bytes: transferred,
-        }
-    }
-}
-
-fn emit_progress_update(
-    app: &RunEmitter<'_>,
-    direction: SpeedtestDirection,
-    progress: &mut ProgressState,
-    transferred: u64,
-    target_bytes: u64,
-) {
-    let elapsed = progress.start.elapsed();
-    let elapsed_ms = elapsed.as_millis() as u64;
-
-    let now = Instant::now();
-    let dt = (now - progress.last_tick).as_secs_f64().max(1e-6);
-    let dbytes = transferred.saturating_sub(progress.last_bytes);
-    let instant = mbps(dbytes, dt);
-
-    let stable = compute_stable_average(progress, transferred, elapsed);
-    let avg = mbps(stable.transferred_bytes, stable.elapsed.as_secs_f64());
-
-    progress.last_tick = now;
-    progress.last_bytes = transferred;
-
-    emit_speedtest_update(
-        app,
-        direction,
-        elapsed_ms,
-        transferred,
-        target_bytes,
-        instant,
-        avg,
-    );
-}
-
-fn final_average(progress: &mut ProgressState, transferred: u64) -> (u64, f64) {
-    let elapsed = progress.start.elapsed();
-    let stable = compute_stable_average(progress, transferred, elapsed);
-    let avg = mbps(stable.transferred_bytes, stable.elapsed.as_secs_f64());
-    (elapsed.as_millis() as u64, avg)
-}
-
-async fn run_speedtest_with_server(
-    app: &RunEmitter<'_>,
-    client: &Client,
-    auth: &SpeedtestAuth,
-    direction: SpeedtestDirection,
-    test_type: SpeedtestType,
-    target_bytes: u64,
-    max_duration: Duration,
+async fn receive_download(
+    mut response: Response,
+    target: u64,
+    transferred: &AtomicU64,
 ) -> Result<()> {
-    let stream_count = parallel_streams(direction.clone(), test_type, target_bytes);
+    check_status(&response, "Download")?;
+    for encoding in response.headers().get_all(header::CONTENT_ENCODING) {
+        ensure!(
+            encoding.to_str()?.eq_ignore_ascii_case("identity"),
+            "Encoded downloads cannot be used for speed measurements"
+        );
+    }
+    if let Some(length) = response.content_length() {
+        ensure!(
+            length == target,
+            "Download size mismatch: expected {target} bytes, received Content-Length {length}"
+        );
+    }
+    let mut received = 0;
+    while let Some(bytes) = response.chunk().await.context("read download body")? {
+        ensure!(
+            bytes.len() as u64 <= target - received,
+            "Download exceeded the requested byte count"
+        );
+        received += bytes.len() as u64;
+        transferred.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+    }
+    ensure!(
+        received == target,
+        "Download ended before the requested byte count ({received}/{target})"
+    );
+    Ok(())
+}
 
-    match (direction, test_type) {
+async fn receive_upload_receipt(mut response: Response, target: u64) -> Result<()> {
+    check_status(&response, "Upload")?;
+    let received = response
+        .headers()
+        .get("x-received-bytes")
+        .context("Upload response is missing X-Received-Bytes")?
+        .to_str()?
+        .parse::<u64>()
+        .context("Invalid upload receipt")?;
+    ensure!(
+        received == target,
+        "Upload receipt mismatch: server received {received} of {target} bytes"
+    );
+    ensure!(
+        response
+            .chunk()
+            .await
+            .context("read upload response")?
+            .is_none(),
+        "Upload response must be empty"
+    );
+    Ok(())
+}
+
+async fn transfer(
+    client: &Client,
+    url: &str,
+    auth: &SpeedtestAuth,
+    direction: &SpeedtestDirection,
+    target: u64,
+    transferred: &AtomicU64,
+    upload_chunk: Bytes,
+) -> Result<()> {
+    match direction {
+        SpeedtestDirection::Download => {
+            let response = client
+                .get(url)
+                .bearer_auth(&auth.0)
+                .header(header::ACCEPT_ENCODING, "identity")
+                .header(header::CACHE_CONTROL, "no-store, no-transform")
+                .send()
+                .await
+                .context("GET download")?;
+            receive_download(response, target, transferred).await
+        }
+        SpeedtestDirection::Upload => {
+            let body = futures_util::stream::unfold(target, move |remaining| {
+                let chunk = upload_chunk.clone();
+                async move {
+                    if remaining == 0 {
+                        return None;
+                    }
+                    let size = remaining.min(chunk.len() as u64) as usize;
+                    Some((
+                        Ok::<_, std::io::Error>(chunk.slice(..size)),
+                        remaining - size as u64,
+                    ))
+                }
+            });
+            let response = client
+                .post(url)
+                .bearer_auth(&auth.0)
+                .header(header::CONTENT_TYPE, "application/octet-stream")
+                .header(header::CONTENT_LENGTH, target)
+                .body(reqwest::Body::wrap_stream(body))
+                .send()
+                .await
+                .context("POST upload")?;
+            receive_upload_receipt(response, target).await?;
+            // Body polling only measures client buffering. Count server receipts instead.
+            transferred.fetch_add(target, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+}
+
+async fn run_transfers(
+    client: &Client,
+    base_url: &str,
+    auth: &SpeedtestAuth,
+    setting: &SpeedtestSetting,
+    mut update: impl FnMut(SpeedtestUpdatePayload),
+) -> Result<SpeedtestDonePayload> {
+    let url = match (&setting.direction, setting.test_type) {
         (SpeedtestDirection::Download, SpeedtestType::ByteStream) => {
-            download_test(app, client, auth, target_bytes, stream_count, max_duration).await?;
+            format!("{base_url}/__down?bytes={}", setting.target_bytes)
         }
         (SpeedtestDirection::Download, SpeedtestType::FileDownload) => {
-            file_download_test(app, client, auth, target_bytes, stream_count, max_duration).await?;
+            let label = size_label_for_bytes(setting.target_bytes)
+                .context("unsupported file-download size")?;
+            format!("{base_url}/__filedown/random/{label}")
         }
-        (SpeedtestDirection::Upload, SpeedtestType::ByteStream) => {
-            upload_test(app, client, auth, target_bytes, stream_count, max_duration).await?;
-        }
-        (SpeedtestDirection::Upload, SpeedtestType::FileDownload) => {
-            anyhow::bail!("upload is not available for file-download tests");
+        (SpeedtestDirection::Upload, SpeedtestType::ByteStream) => format!("{base_url}/__up"),
+        _ => bail!("upload is not available for file-download tests"),
+    };
+    let count = parallel_streams(&setting.direction, setting.test_type, setting.target_bytes);
+    let target_bytes = setting
+        .target_bytes
+        .checked_mul(count as u64)
+        .context("Transfer size overflow")?;
+    let transferred = Arc::new(AtomicU64::new(0));
+    let upload_chunk = if matches!(setting.direction, SpeedtestDirection::Upload) {
+        let mut bytes = vec![0; CHUNK_SIZE];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        Bytes::from(bytes)
+    } else {
+        Bytes::new()
+    };
+    // These futures are owned by the run: cancellation drops every request immediately.
+    let mut pending = FuturesUnordered::new();
+    for _ in 0..count {
+        pending.push(transfer(
+            client,
+            &url,
+            auth,
+            &setting.direction,
+            setting.target_bytes,
+            &transferred,
+            upload_chunk.clone(),
+        ));
+    }
+    let started = Instant::now();
+    let duration = Duration::from_millis(
+        setting
+            .max_duration_ms
+            .unwrap_or(MAX_DURATION.as_millis() as u64),
+    );
+    let deadline = tokio::time::sleep(duration);
+    tokio::pin!(deadline);
+    let mut ticker = tokio::time::interval(TICK);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_tick = started;
+    let mut last_bytes = 0;
+    let mut result = SpeedtestResult::Full;
+    let mut message = None;
+    while !pending.is_empty() {
+        tokio::select! {
+            biased;
+            _ = &mut deadline => {
+                result = SpeedtestResult::Timeout;
+                break;
+            }
+            response = pending.next() => {
+                if let Some(Err(error)) = response {
+                    result = SpeedtestResult::Error;
+                    message = Some(error.to_string());
+                    break;
+                }
+            }
+            _ = ticker.tick() => {
+                let now = Instant::now();
+                let bytes = transferred.load(Ordering::Relaxed);
+                let elapsed = now - started;
+                let instant = if matches!(setting.direction, SpeedtestDirection::Download) {
+                    mbps(bytes.saturating_sub(last_bytes), (now - last_tick).as_secs_f64())
+                } else { 0.0 };
+                update(SpeedtestUpdatePayload {
+                    direction: setting.direction.clone(), phase: "running".into(),
+                    elapsed_ms: elapsed.as_millis() as u64,
+                    transferred_bytes: bytes, target_bytes, instant_mbps: instant,
+                    avg_mbps: mbps(bytes, elapsed.as_secs_f64()),
+                });
+                last_bytes = bytes;
+                last_tick = now;
+            }
         }
     }
-
-    Ok(())
+    drop(pending);
+    let elapsed = started.elapsed();
+    let bytes = transferred.load(Ordering::Relaxed);
+    Ok(SpeedtestDonePayload {
+        direction: setting.direction.clone(),
+        result,
+        elapsed_ms: elapsed.as_millis() as u64,
+        transferred_bytes: bytes,
+        target_bytes,
+        avg_mbps: mbps(bytes, elapsed.as_secs_f64()),
+        message,
+    })
 }
 
 pub async fn run_speedtest(
@@ -252,481 +339,26 @@ pub async fn run_speedtest(
     max_duration: Duration,
 ) -> Result<()> {
     let client = build_client(max_duration)?;
-    let auth = SpeedtestAuth(get_token(&client).await?);
-
-    run_speedtest_with_server(
-        app,
-        &client,
-        &auth,
+    let auth = get_token(&client, FOCTAL_SPEEDTEST_BASE_URL).await?;
+    let setting = SpeedtestSetting {
         direction,
         test_type,
         target_bytes,
-        max_duration,
+        max_duration_ms: Some(max_duration.as_millis() as u64),
+    };
+    let result = run_transfers(
+        &client,
+        FOCTAL_SPEEDTEST_BASE_URL,
+        &auth,
+        &setting,
+        |payload| {
+            let _ = app.emit("speedtest:update", payload);
+        },
     )
-    .await
-}
-
-async fn receive_download(
-    response: reqwest::Response,
-    target: u64,
-    transferred: &AtomicU64,
-    cancel: &CancellationToken,
-) -> Result<()> {
-    let mut stream = response.error_for_status()?.bytes_stream();
-    let mut received = 0;
-    while received < target {
-        tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Ok(()),
-            chunk = stream.next() => {
-                let bytes = chunk.context("Download ended before the requested byte count")??;
-                let accepted = (bytes.len() as u64).min(target - received);
-                received += accepted;
-                transferred.fetch_add(accepted, Ordering::Relaxed);
-            }
-        }
-    }
+    .await?;
+    let _ = app.emit("speedtest:done", result);
     Ok(())
-}
-
-async fn download_test(
-    app: &RunEmitter<'_>,
-    client: &Client,
-    auth: &SpeedtestAuth,
-    per_stream_target_bytes: u64,
-    stream_count: usize,
-    max_duration: Duration,
-) -> Result<()> {
-    let target_bytes = total_target_bytes(per_stream_target_bytes, stream_count);
-    let transferred = Arc::new(AtomicU64::new(0));
-    let cancel = CancellationToken::new();
-    let mut join_set = JoinSet::new();
-
-    for _ in 0..stream_count {
-        let client = client.clone();
-        let auth = auth.clone();
-        let transferred = transferred.clone();
-        let cancel = cancel.clone();
-
-        join_set.spawn(async move {
-            let url = build_download_url(per_stream_target_bytes, &auth);
-            let resp = client.get(url).send().await.context("GET download")?;
-
-            if !resp.status().is_success() {
-                anyhow::bail!("download http {}", resp.status());
-            }
-
-            receive_download(resp, per_stream_target_bytes, &transferred, &cancel).await?;
-
-            Ok::<(), anyhow::Error>(())
-        });
-    }
-
-    let mut progress = init_progress();
-    let mut ticker = tokio::time::interval(TICK);
-    let mut result = SpeedtestResult::Full;
-    let mut completed = 0usize;
-
-    loop {
-        tokio::select! {
-            _ = ticker.tick() => {
-                let transferred_now = transferred.load(Ordering::Relaxed);
-                emit_progress_update(app, SpeedtestDirection::Download, &mut progress, transferred_now, target_bytes);
-
-                let elapsed = progress.start.elapsed();
-                if elapsed >= max_duration {
-                    result = SpeedtestResult::Timeout;
-                    cancel.cancel();
-                    join_set.abort_all();
-                    break;
-                }
-                if transferred_now >= target_bytes {
-                    result = SpeedtestResult::Full;
-                    cancel.cancel();
-                    break;
-                }
-            }
-            joined = join_set.join_next(), if completed < stream_count => {
-                match joined {
-                    Some(Ok(Ok(()))) => {
-                        completed += 1;
-                        if completed == stream_count {
-                            break;
-                        }
-                    }
-                    Some(Ok(Err(err))) => {
-                        cancel.cancel();
-                        join_set.abort_all();
-                        return Err(err);
-                    }
-                    Some(Err(join_err)) => {
-                        if join_err.is_cancelled() {
-                            break;
-                        }
-                        cancel.cancel();
-                        join_set.abort_all();
-                        return Err(anyhow::anyhow!(join_err));
-                    }
-                    None => break,
-                }
-            }
-        }
-    }
-
-    cancel.cancel();
-    join_set.abort_all();
-    while join_set.join_next().await.is_some() {}
-
-    let transferred = transferred.load(Ordering::Relaxed);
-    let (elapsed_ms, avg) = final_average(&mut progress, transferred);
-
-    emit_speedtest_done(
-        app,
-        SpeedtestDonePayload {
-            direction: SpeedtestDirection::Download,
-            result,
-            elapsed_ms,
-            transferred_bytes: transferred,
-            target_bytes,
-            avg_mbps: avg,
-            message: None,
-        },
-    );
-
-    Ok(())
-}
-
-async fn file_download_test(
-    app: &RunEmitter<'_>,
-    client: &Client,
-    auth: &SpeedtestAuth,
-    per_stream_target_bytes: u64,
-    stream_count: usize,
-    max_duration: Duration,
-) -> Result<()> {
-    let target_bytes = total_target_bytes(per_stream_target_bytes, stream_count);
-    let transferred = Arc::new(AtomicU64::new(0));
-    let cancel = CancellationToken::new();
-    let mut join_set = JoinSet::new();
-
-    for _ in 0..stream_count {
-        let client = client.clone();
-        let auth = auth.clone();
-        let transferred = transferred.clone();
-        let cancel = cancel.clone();
-
-        join_set.spawn(async move {
-            let url = build_file_download_url(per_stream_target_bytes, &auth)?;
-            let resp = client.get(url).send().await.context("GET file download")?;
-
-            if !resp.status().is_success() {
-                anyhow::bail!("file download http {}", resp.status());
-            }
-
-            receive_download(resp, per_stream_target_bytes, &transferred, &cancel).await?;
-
-            Ok::<(), anyhow::Error>(())
-        });
-    }
-
-    let mut progress = init_progress();
-    let mut ticker = tokio::time::interval(TICK);
-    let mut result = SpeedtestResult::Full;
-    let mut completed = 0usize;
-
-    loop {
-        tokio::select! {
-            _ = ticker.tick() => {
-                let transferred_now = transferred.load(Ordering::Relaxed);
-                emit_progress_update(app, SpeedtestDirection::Download, &mut progress, transferred_now, target_bytes);
-
-                let elapsed = progress.start.elapsed();
-                if elapsed >= max_duration {
-                    result = SpeedtestResult::Timeout;
-                    cancel.cancel();
-                    join_set.abort_all();
-                    break;
-                }
-                if transferred_now >= target_bytes {
-                    result = SpeedtestResult::Full;
-                    cancel.cancel();
-                    break;
-                }
-            }
-            joined = join_set.join_next(), if completed < stream_count => {
-                match joined {
-                    Some(Ok(Ok(()))) => {
-                        completed += 1;
-                        if completed == stream_count {
-                            break;
-                        }
-                    }
-                    Some(Ok(Err(err))) => {
-                        cancel.cancel();
-                        join_set.abort_all();
-                        return Err(err);
-                    }
-                    Some(Err(join_err)) => {
-                        if join_err.is_cancelled() {
-                            break;
-                        }
-                        cancel.cancel();
-                        join_set.abort_all();
-                        return Err(anyhow::anyhow!(join_err));
-                    }
-                    None => break,
-                }
-            }
-        }
-    }
-
-    cancel.cancel();
-    join_set.abort_all();
-    while join_set.join_next().await.is_some() {}
-
-    let transferred = transferred.load(Ordering::Relaxed);
-    let (elapsed_ms, avg) = final_average(&mut progress, transferred);
-
-    emit_speedtest_done(
-        app,
-        SpeedtestDonePayload {
-            direction: SpeedtestDirection::Download,
-            result,
-            elapsed_ms,
-            transferred_bytes: transferred,
-            target_bytes,
-            avg_mbps: avg,
-            message: None,
-        },
-    );
-
-    Ok(())
-}
-
-async fn upload_test(
-    app: &RunEmitter<'_>,
-    client: &Client,
-    auth: &SpeedtestAuth,
-    per_stream_target_bytes: u64,
-    stream_count: usize,
-    max_duration: Duration,
-) -> Result<()> {
-    let target_bytes = total_target_bytes(per_stream_target_bytes, stream_count);
-    let sent = Arc::new(AtomicU64::new(0));
-    let cancel = CancellationToken::new();
-    let mut join_set = JoinSet::new();
-
-    for _ in 0..stream_count {
-        let client = client.clone();
-        let auth = auth.clone();
-        let sent = sent.clone();
-        let cancel = cancel.clone();
-
-        join_set.spawn(async move {
-            let url = build_upload_url(&auth);
-            let sent2 = sent.clone();
-            let cancel2 = cancel.clone();
-            let body_stream = futures_util::stream::try_unfold(
-                UpState {
-                    remaining: per_stream_target_bytes,
-                    cancel: cancel2,
-                },
-                move |mut st| {
-                    let sent2 = sent2.clone();
-                    async move {
-                        if st.remaining == 0 || st.cancel.is_cancelled() {
-                            return Ok::<Option<(Bytes, UpState)>, anyhow::Error>(None);
-                        }
-
-                        let take = (st.remaining.min(CHUNK_SIZE as u64)) as usize;
-                        let buf = Bytes::from(vec![0u8; take]);
-
-                        st.remaining -= take as u64;
-                        sent2.fetch_add(take as u64, Ordering::Relaxed);
-
-                        Ok(Some((buf, st)))
-                    }
-                },
-            );
-
-            let resp = apply_upload_auth(client.post(url), &auth)
-                .body(reqwest::Body::wrap_stream(body_stream))
-                .send()
-                .await?;
-
-            if !resp.status().is_success() {
-                anyhow::bail!("upload http {}", resp.status());
-            }
-
-            Ok::<(), anyhow::Error>(())
-        });
-    }
-
-    let mut progress = init_progress();
-    let mut ticker = tokio::time::interval(TICK);
-    let mut result = SpeedtestResult::Full;
-    let mut completed = 0usize;
-
-    loop {
-        tokio::select! {
-            _ = ticker.tick() => {
-                let transferred = sent.load(Ordering::Relaxed);
-                emit_progress_update(app, SpeedtestDirection::Upload, &mut progress, transferred, target_bytes);
-
-                let elapsed = progress.start.elapsed();
-                if elapsed >= max_duration {
-                    result = SpeedtestResult::Timeout;
-                    cancel.cancel();
-                    join_set.abort_all();
-                    break;
-                }
-                if transferred >= target_bytes {
-                    result = SpeedtestResult::Full;
-                    cancel.cancel();
-                }
-            }
-            joined = join_set.join_next(), if completed < stream_count => {
-                match joined {
-                    Some(Ok(Ok(()))) => {
-                        completed += 1;
-                        if completed == stream_count {
-                            break;
-                        }
-                    }
-                    Some(Ok(Err(err))) => {
-                        cancel.cancel();
-                        join_set.abort_all();
-                        return Err(err);
-                    }
-                    Some(Err(join_err)) => {
-                        if join_err.is_cancelled() {
-                            result = SpeedtestResult::Canceled;
-                            break;
-                        }
-                        cancel.cancel();
-                        join_set.abort_all();
-                        return Err(anyhow::anyhow!(join_err));
-                    }
-                    None => break,
-                }
-            }
-        }
-    }
-
-    cancel.cancel();
-    join_set.abort_all();
-    while join_set.join_next().await.is_some() {}
-
-    let transferred = sent.load(Ordering::Relaxed);
-    let (elapsed_ms, avg) = final_average(&mut progress, transferred);
-
-    emit_speedtest_done(
-        app,
-        SpeedtestDonePayload {
-            direction: SpeedtestDirection::Upload,
-            result,
-            elapsed_ms,
-            transferred_bytes: transferred,
-            target_bytes,
-            avg_mbps: avg,
-            message: None,
-        },
-    );
-
-    Ok(())
-}
-
-fn emit_speedtest_update(
-    app: &RunEmitter<'_>,
-    direction: SpeedtestDirection,
-    elapsed_ms: u64,
-    transferred_bytes: u64,
-    target_bytes: u64,
-    instant_mbps: f64,
-    avg_mbps: f64,
-) {
-    let _ = app.emit(
-        "speedtest:update",
-        SpeedtestUpdatePayload {
-            direction,
-            phase: "running".into(),
-            elapsed_ms,
-            transferred_bytes,
-            target_bytes,
-            instant_mbps,
-            avg_mbps,
-        },
-    );
-}
-
-fn emit_speedtest_done(app: &RunEmitter<'_>, payload: SpeedtestDonePayload) {
-    let _ = app.emit("speedtest:done", payload);
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn average_uses_actual_warmup_sample_time() {
-        let mut progress = init_progress();
-        compute_stable_average(&mut progress, 1000, Duration::from_millis(900));
-        let average = compute_stable_average(&mut progress, 2000, Duration::from_millis(1100));
-        assert_eq!(average.elapsed, Duration::from_millis(200));
-        assert_eq!(average.transferred_bytes, 1000);
-    }
-
-    #[test]
-    fn completion_at_first_warmup_sample_preserves_average() {
-        let mut progress = init_progress();
-        let average = compute_stable_average(&mut progress, 1000, Duration::from_secs(1));
-        assert_eq!(average.elapsed, Duration::from_secs(1));
-        assert_eq!(average.transferred_bytes, 1000);
-    }
-    #[tokio::test]
-    async fn downloads_reject_short_bodies_and_bound_excess_bytes() {
-        use tokio::{
-            io::{AsyncReadExt, AsyncWriteExt},
-            net::TcpListener,
-        };
-        for (body, target, succeeds) in [("abc", 4, false), ("abcde", 4, true), ("abcd", 4, true)] {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let address = listener.local_addr().unwrap();
-            let server = tokio::spawn(async move {
-                let (mut socket, _) = listener.accept().await.unwrap();
-                let mut request = [0; 4096];
-                assert!(socket.read(&mut request).await.unwrap() > 0);
-                socket
-                    .write_all(
-                        format!(
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                            body.len(),
-                            body
-                        )
-                        .as_bytes(),
-                    )
-                    .await
-                    .unwrap();
-            });
-            let client = Client::builder()
-                .no_proxy()
-                .timeout(Duration::from_secs(2))
-                .build()
-                .unwrap();
-            let response = client
-                .get(format!("http://{address}"))
-                .send()
-                .await
-                .unwrap();
-            let transferred = AtomicU64::new(0);
-            let result =
-                receive_download(response, target, &transferred, &CancellationToken::new()).await;
-            assert_eq!(result.is_ok(), succeeds);
-            assert_eq!(
-                transferred.load(Ordering::Relaxed),
-                (body.len() as u64).min(target)
-            );
-            server.await.unwrap();
-        }
-    }
-}
+mod tests;

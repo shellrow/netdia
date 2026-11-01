@@ -4,7 +4,7 @@ import { ref, onMounted, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { useDiagnosticListeners } from "../composables/useDiagnosticListeners";
 import type { IpInfo, IpInfoDual } from "../types/internet";
-import { fmtBytes, nv } from "../utils/formatter";
+import { nv } from "../utils/formatter";
 import { useScrollPanelHeight } from "../composables/useScrollPanelHeight";
 import { usePrivacyGate } from "../composables/usePrivacyGate";
 
@@ -41,15 +41,15 @@ const speedDirection = ref<Direction>("download");
 const speedtestType = ref<SpeedtestType>("file-download");
 
 const sizeOptions = ref([
-  { label: "100 KB", bytes: 100 * 1024 },
-  { label: "1 MB", bytes: 1 * 1024 * 1024 },
-  { label: "10 MB", bytes: 10 * 1024 * 1024 },
-  { label: "25 MB", bytes: 25 * 1024 * 1024 },
-  { label: "50 MB", bytes: 50 * 1024 * 1024 },
-  { label: "100 MB", bytes: 100 * 1024 * 1024 },
+  { label: "100 KiB", bytes: 100 * 1024 },
+  { label: "1 MiB", bytes: 1 * 1024 * 1024 },
+  { label: "10 MiB", bytes: 10 * 1024 * 1024 },
+  { label: "25 MiB", bytes: 25 * 1024 * 1024 },
+  { label: "50 MiB", bytes: 50 * 1024 * 1024 },
+  { label: "100 MiB", bytes: 100 * 1024 * 1024 },
 ]);
 type SizeOption = (typeof sizeOptions.value)[number];
-// default 10MB
+// Default: 10 MiB per request.
 const selectedSize = ref<SizeOption>(sizeOptions.value[2]);
 
 const latencyRunId = ref<string | null>(null);
@@ -84,8 +84,8 @@ const progressPct = computed(() => {
   return Math.min(100, Math.max(0, Math.round(pct * 10) / 10));
 });
 
-const transferredText = computed(() => fmtBytes(stTransferred.value));
-const targetText = computed(() => fmtBytes(stTarget.value || selectedSize.value.bytes));
+const transferredText = computed(() => `${(stTransferred.value / 1048576).toFixed(2)} MiB`);
+const targetText = computed(() => `${((stTarget.value || selectedSize.value.bytes) / 1048576).toFixed(2)} MiB`);
 const elapsedText = computed(() => fmtDuration(stElapsedMs.value));
 
 const maxDurationMs = 30_000;
@@ -142,6 +142,7 @@ async function startSpeedtest() {
       await invoke("measure_latency", { runId: latencyId });
     } catch {
       latencyRunning.value = false;
+      latencyRun.finish();
       latencyMs.value = null;
       jitterMs.value = null;
       edgeColo.value = null;
@@ -457,7 +458,7 @@ function fmtDuration(ms: number): string {
                     :disabled="stRunning || stStarting"
                     class="w-36"
                     size="small"
-                    aria-label="Speed test size"
+                    aria-label="Size per request"
                   />
                   <Button
                     icon="pi pi-play"
@@ -479,25 +480,32 @@ function fmtDuration(ms: number): string {
             </template>
 
             <template #content>
+              <p class="mb-3 text-sm text-surface-500">Size is per request; 2–4 requests run in parallel.</p>
               <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div class="rounded-lg bg-surface-50/5 px-4 py-3">
                   <div class="text-xs text-surface-500">Current</div>
-                  <div class="text-2xl font-semibold tabular-nums">{{ stInstantMbps.toFixed(1) }} Mbps</div>
+                  <div class="text-2xl font-semibold tabular-nums">
+                    <template v-if="speedDirection === 'download'">{{ stInstantMbps.toFixed(1) }} Mbps</template>
+                    <span v-else>—</span>
+                  </div>
                 </div>
 
                 <div class="rounded-lg bg-surface-50/5 px-4 py-3">
-                  <div class="text-xs text-surface-500">Average</div>
+                  <div class="text-xs text-surface-500">{{ stDoneResult && stDoneResult !== "full" ? "Partial average" : "Average" }}</div>
                   <div class="text-2xl font-semibold tabular-nums">{{ stAvgMbps.toFixed(1) }} Mbps</div>
                 </div>
 
                 <div class="rounded-lg bg-surface-50/5 px-4 py-3">
                   <div class="text-xs text-surface-500">Max</div>
-                  <div class="text-2xl font-semibold tabular-nums">{{ stMaxMbps.toFixed(1) }} Mbps</div>
+                  <div class="text-2xl font-semibold tabular-nums">
+                    <template v-if="speedDirection === 'download' && stMaxMbps > 0">{{ stMaxMbps.toFixed(1) }} Mbps</template>
+                    <span v-else>—</span>
+                  </div>
                 </div>
 
                 <div class="rounded-lg bg-surface-50/5 px-4 py-3">
                   <div class="flex items-center justify-between">
-                    <div class="text-xs text-surface-500">Latency</div>
+                    <div class="text-xs text-surface-500">HTTP latency</div>
                     <span v-if="latencyRunning" class="text-surface-500">Measuring...</span>
                     <span v-else-if="edgeColo" class="text-xs text-surface-500 font-mono">{{ edgeColo }}</span>
                   </div>
@@ -527,16 +535,23 @@ function fmtDuration(ms: number): string {
 
                 <ProgressBar :value="progressPct" class="mt-2" />
 
+                <p v-if="speedDirection === 'upload'" class="mt-2 text-sm text-surface-500">
+                  Upload progress and average speed use server-confirmed bytes. Current and maximum upload speeds are not measured.
+                </p>
+
                 <div v-if="isUploadDisabled" class="mt-2 text-sm text-surface-500">
                   File download tests are download-only, so upload is unavailable.
                 </div>
 
                 <div v-if="stDoneResult === 'timeout'" class="mt-2 text-sm text-yellow-500">
-                  Timed out (30s). Speed is calculated from actual transferred bytes / actual elapsed time.
+                  Transfer timed out (30s). The displayed average is a partial result, not a completed speed measurement.
                 </div>
                 <div v-if="stDoneResult === 'full'" class="mt-2 text-sm text-green-500">
                   Completed full transfer.
                 </div>
+                <p v-if="stDoneResult === 'full' && stElapsedMs < 2000" class="mt-2 text-sm text-surface-500">
+                  Short transfer: this result may not represent sustained throughput.
+                </p>
                 <div v-if="stDoneResult === 'canceled'" class="mt-2 text-sm text-surface-500">
                   Canceled.
                 </div>
