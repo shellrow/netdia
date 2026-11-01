@@ -28,18 +28,19 @@ tauri-plugin-autostart = "2.5.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = { version = "1" }
-turso = "0.6.1"
+turso = { version = "0.6.1", default-features = false, features = ["mimalloc"] }
 tracing = { version = "0.1" }
 tracing-subscriber = { version = "0.3", features = ["time", "chrono"] }
 libc = "0.2"
 mac-addr = { version = "0.3.0" }
-netdev = { version = "0.46", features = ["serde"] }
+netdev = { version = "0.47", features = ["serde"] }
 netroute = { version = "0.3", features = ["serde"] }
 netsock = { version = "0.5", features = ["serde"] }
 futures = {version = "0.3", features = ["executor", "thread-pool"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }
 tokio-util = "0.7"
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots", "http2", "system-proxy", "stream" ] }
 hostname = { version = "0.4" }
 os_info = { version = "3.12" }
@@ -50,7 +51,7 @@ humansize = "2.1"
 url = "2.5"
 data-encoding = "2.9"
 home = { version = "0.5" }
-nex-packet = "0.27"
+nex-packet = "0.28.1"
 socket2 = { version = "0.5", features = ["all"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-native-certs = "0.7"
@@ -89,5 +90,11 @@ features = [
     "Win32_System_Threading"
 ]
 
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+[target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "windows")))'.dependencies]
 tauri-plugin-updater = "2.10.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+tauri-plugin-updater = { version = "2.10.1", default-features = false, features = ["rustls-tls", "system-proxy"] }
+
+[dev-dependencies]
+rcgen = "0.14"
