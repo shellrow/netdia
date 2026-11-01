@@ -35,6 +35,18 @@ fn summarize_rtts(rtts_ms: &[u64]) -> (Option<u64>, Option<u64>, Option<u64>) {
     )
 }
 
+fn ping_url(host: &str, port: u16) -> Result<url::Url> {
+    if host.starts_with("http://") || host.starts_with("https://") {
+        return Ok(url::Url::parse(host)?);
+    }
+    let scheme = if port == 443 { "https" } else { "http" };
+    let host = match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V6(ip)) => format!("[{ip}]"),
+        _ => host.to_string(),
+    };
+    Ok(url::Url::parse(&format!("{scheme}://{host}:{port}/"))?)
+}
+
 pub async fn http_ping(
     app: &AppHandle,
     run_id: &str,
@@ -64,12 +76,7 @@ pub async fn http_ping(
         }
     });
 
-    let url = if host.starts_with("http://") || host.starts_with("https://") {
-        host
-    } else {
-        let scheme = if port == 443 { "https" } else { "http" };
-        format!("{scheme}://{host}:{port}/")
-    };
+    let url = ping_url(&host, port)?;
 
     let mut samples = Vec::with_capacity(setting.count as usize);
     let mut rtts_ok: Vec<u64> = Vec::new();
@@ -91,7 +98,7 @@ pub async fn http_ping(
 
         let started = Instant::now();
         // TTBF(Time to First Byte) as RTT
-        let fut = client.get(&url).send();
+        let fut = client.get(url.clone()).send();
 
         match tokio::time::timeout(per_req_to, fut).await {
             Err(_) => {
@@ -189,4 +196,25 @@ pub async fn http_ping(
     );
 
     Ok(stat)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn http_ping_formats_ipv6_addresses_and_preserves_explicit_urls() {
+        assert_eq!(
+            super::ping_url("::1", 8080).unwrap().as_str(),
+            "http://[::1]:8080/"
+        );
+        assert_eq!(
+            super::ping_url("127.0.0.1", 443).unwrap().as_str(),
+            "https://127.0.0.1/"
+        );
+        assert_eq!(
+            super::ping_url("https://example.com/path", 80)
+                .unwrap()
+                .as_str(),
+            "https://example.com/path"
+        );
+    }
 }

@@ -160,21 +160,24 @@ impl HostScanSetting {
             concurrency: req.concurrency,
         }
     }
-    pub fn neighbor_scan_default(iface: &netdev::Interface) -> Self {
-        let mut targets: Vec<MaybeHost> = Vec::new();
-        if let Some(gw) = &iface.gateway {
-            if let Some(ipv4) = gw.ipv4.first() {
-                if let Ok(ipv4net) = netdev::ipnet::Ipv4Net::new(*ipv4, 24) {
-                    for ipv4 in ipv4net.hosts() {
-                        targets.push(MaybeHost {
-                            ip: Some(IpAddr::V4(ipv4)),
-                            hostname: None,
-                        });
-                    }
-                }
-            }
-        }
-        HostScanSetting {
+    pub fn neighbor_scan_default(iface: &netdev::Interface) -> anyhow::Result<Self> {
+        let network = iface
+            .ipv4
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("Selected interface has no IPv4 network"))?;
+        let size = 1u64 << (32 - network.prefix_len());
+        anyhow::ensure!(
+            size <= 65_536,
+            "Neighbor network exceeds 65536 addresses; use Host Scan with a smaller range"
+        );
+        let targets = network
+            .hosts()
+            .map(|ip| MaybeHost {
+                ip: Some(IpAddr::V4(ip)),
+                hostname: None,
+            })
+            .collect();
+        Ok(HostScanSetting {
             targets,
             hop_limit: 64,
             timeout_ms: 1000,
@@ -182,7 +185,7 @@ impl HostScanSetting {
             payload: Some("netd".to_string()),
             ordered: true,
             concurrency: Some(100),
-        }
+        })
     }
 
     pub fn target_strings(&self) -> Vec<String> {
@@ -302,4 +305,29 @@ pub struct NeighborScanReport {
     pub run_id: String,
     pub neighbors: Vec<NeighborHost>,
     pub total: u32,
+}
+
+#[cfg(test)]
+mod neighbor_tests {
+    use super::*;
+
+    #[test]
+    fn neighbor_scan_uses_interface_prefix_without_a_gateway() {
+        let mut iface = netdev::Interface::dummy();
+        iface.ipv4 = vec!["192.0.2.9/30".parse().unwrap()];
+        let scan = HostScanSetting::neighbor_scan_default(&iface).unwrap();
+        assert_eq!(scan.target_strings(), vec!["192.0.2.9", "192.0.2.10"]);
+        iface.ipv4 = vec!["192.0.2.9/32".parse().unwrap()];
+        assert_eq!(
+            HostScanSetting::neighbor_scan_default(&iface)
+                .unwrap()
+                .targets
+                .len(),
+            1
+        );
+        iface.ipv4 = vec!["10.0.0.1/8".parse().unwrap()];
+        assert!(HostScanSetting::neighbor_scan_default(&iface).is_err());
+        iface.ipv4.clear();
+        assert!(HostScanSetting::neighbor_scan_default(&iface).is_err());
+    }
 }

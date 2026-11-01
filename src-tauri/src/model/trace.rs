@@ -16,9 +16,9 @@ pub struct TracerouteSetting {
     pub ip_addr: IpAddr,
     /// Display hostname (optional)
     pub hostname: Option<String>,
-    /// Maximum hops (rounded to 30 if 0 or unset)
+    /// Maximum hops, from 1 to 64
     pub max_hops: u8,
-    /// Number of tries per hop (rounded to 1 if 0 or unset)
+    /// Number of tries per hop, from 1 to 5
     pub tries_per_hop: u8,
     /// Timeout per try (ms)
     pub timeout_ms: u64,

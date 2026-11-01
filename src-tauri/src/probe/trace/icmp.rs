@@ -58,6 +58,8 @@ pub async fn icmp_traceroute(
             }
         }
 
+        #[cfg(target_os = "linux")]
+        let cfg = cfg.with_sock_type(crate::socket::icmp::IcmpSocketType::Raw);
         let socket = AsyncIcmpSocket::new(&cfg).await?;
         let echo_id = socket.echo_identifier(echo_id)?;
         let target = SocketAddr::new(dst_ip, 0);

@@ -1,7 +1,5 @@
 use crate::events::EventEmitter;
-use std::net::IpAddr;
 
-use netdev::Interface;
 use tauri::AppHandle;
 
 use crate::model::ping::{PingErrorPayload, PingProtocol, PingSetting, PingStartPayload};
@@ -12,28 +10,8 @@ use crate::probe::ping;
 pub async fn ping(app: AppHandle, run_id: String, setting: PingSetting) -> Result<(), String> {
     let operation = crate::operation::claim_op(OP_PING, &run_id)?;
     super::validation::validate_ping(&setting)?;
-    let default_interface: Interface = netdev::get_default_interface()
-        .map_err(|e| format!("Failed to get default interface: {}", e))?;
-    let src_ip = match setting.ip_addr {
-        std::net::IpAddr::V4(_) => {
-            // Pick first IPv4 address of default interface
-            let ipv4 = default_interface
-                .ipv4_addrs()
-                .into_iter()
-                .next()
-                .ok_or("No IPv4 address found on default interface")?;
-            IpAddr::V4(ipv4)
-        }
-        std::net::IpAddr::V6(_) => {
-            // Pick first IPv6 address of default interface
-            let ipv6 = default_interface
-                .ipv6_addrs()
-                .into_iter()
-                .next()
-                .ok_or("No IPv6 address found on default interface")?;
-            IpAddr::V6(ipv6)
-        }
-    };
+    let src_ip = crate::net::route::source_address(setting.ip_addr)
+        .map_err(|error| format!("Failed to select a source address: {error}"))?;
 
     let token = operation.token.clone();
 

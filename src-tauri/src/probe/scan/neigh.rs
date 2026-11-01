@@ -36,7 +36,7 @@ pub async fn neighbor_scan(
         },
     );
 
-    let setting = crate::model::scan::HostScanSetting::neighbor_scan_default(&iface);
+    let setting = crate::model::scan::HostScanSetting::neighbor_scan_default(&iface)?;
 
     let hostscan_result = match crate::probe::scan::icmp::host_scan(
         &app,

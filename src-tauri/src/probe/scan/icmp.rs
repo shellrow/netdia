@@ -3,7 +3,7 @@ use anyhow::Result;
 use futures::{stream, StreamExt};
 use rand::{seq::SliceRandom, thread_rng, Rng};
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
@@ -111,6 +111,9 @@ pub async fn host_scan(
     let socket_v4 = if target_map.keys().any(|ip| ip.is_ipv4()) {
         let mut cfg = IcmpConfig::new(IcmpKind::V4);
         cfg = cfg.with_ttl(setting.hop_limit.max(1) as u32);
+        if let Some(source) = src_ipv4 {
+            cfg = cfg.with_bind(SocketAddr::new(source, 0));
+        }
         Some(Arc::new(AsyncIcmpSocket::new(&cfg).await?))
     } else {
         None
@@ -119,6 +122,9 @@ pub async fn host_scan(
     let socket_v6 = if target_map.keys().any(|ip| ip.is_ipv6()) {
         let mut cfg = IcmpConfig::new(IcmpKind::V6);
         cfg = cfg.with_hoplimit(setting.hop_limit.max(1) as u32);
+        if let Some(source) = src_ipv6 {
+            cfg = cfg.with_bind(SocketAddr::new(source, 0));
+        }
         Some(Arc::new(AsyncIcmpSocket::new(&cfg).await?))
     } else {
         None
@@ -139,7 +145,7 @@ pub async fn host_scan(
     let socket_v4_for_tasks = socket_v4.clone();
     let socket_v6_for_tasks = socket_v6.clone();
 
-    let mut tasks = stream::iter(ip_list.into_iter())
+    let mut tasks = stream::iter(ip_list)
         .map(|dst_ip| {
             let app = app.clone();
             let run_id = run_id.clone();
@@ -159,17 +165,9 @@ pub async fn host_scan(
                     return None;
                 }
 
-                let (sock_opt, pending_map, src_ip) = match SocketFamily::from_ip(&dst_ip) {
-                    SocketFamily::IPV4 => (
-                        socket_v4.clone(),
-                        pending_v4.clone(),
-                        src_ipv4.unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
-                    ),
-                    SocketFamily::IPV6 => (
-                        socket_v6.clone(),
-                        pending_v6.clone(),
-                        src_ipv6.unwrap_or(IpAddr::V6(Ipv6Addr::UNSPECIFIED)),
-                    ),
+                let (sock_opt, pending_map) = match SocketFamily::from_ip(&dst_ip) {
+                    SocketFamily::IPV4 => (socket_v4.clone(), pending_v4.clone()),
+                    SocketFamily::IPV6 => (socket_v6.clone(), pending_v6.clone()),
                 };
 
                 let (state, rtt_ms, message) = if let Some(sock) = sock_opt {
@@ -207,13 +205,20 @@ pub async fn host_scan(
                             );
                         }
 
-                        let pkt = match build_icmp_echo_bytes(
-                            src_ip,
-                            dst_ip,
-                            id,
-                            seq as u16,
-                            payload.as_bytes(),
-                        ) {
+                        let selected_source = if dst_ip.is_ipv4() { src_ipv4 } else { src_ipv6 };
+                        let pkt = match selected_source
+                            .map(Ok)
+                            .unwrap_or_else(|| crate::net::route::source_address(dst_ip))
+                            .map_err(anyhow::Error::from)
+                            .and_then(|source| {
+                                build_icmp_echo_bytes(
+                                    source,
+                                    dst_ip,
+                                    id,
+                                    seq as u16,
+                                    payload.as_bytes(),
+                                )
+                            }) {
                             Ok(packet) => packet,
                             Err(error) => {
                                 let mut map = pending_map.lock().await;

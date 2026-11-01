@@ -4,16 +4,12 @@ use crate::model::ping::{
     PingDonePayload, PingProgressPayload, PingProtocol, PingSample, PingSetting, PingStat,
 };
 use crate::model::probe::{ProbeStatus, ProbeStatusKind};
+use crate::probe::packet::match_udp_reply;
 use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
 use crate::socket::udp::{AsyncUdpSocket, UdpConfig};
 use crate::socket::SocketFamily;
 use anyhow::Result;
 use bytes::Bytes;
-use nex_packet::icmp::IcmpType;
-use nex_packet::icmpv6::Icmpv6Packet;
-use nex_packet::icmpv6::Icmpv6Type;
-use nex_packet::packet::Packet;
-use nex_packet::{icmp::IcmpPacket, ip::IpNextProtocol, ipv4::Ipv4Packet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
@@ -22,38 +18,6 @@ use tokio_util::sync::CancellationToken;
 /// Default base target UDP port for traceroute or ping
 const DEFAULT_BASE_TARGET_UDP_PORT: u16 = 33435;
 
-/// Check if the ICMP message is Port Unreachable
-fn is_port_unreach_v4(icmp_bytes: &[u8]) -> bool {
-    if let Ok(ip) = Ipv4Packet::try_from_buf(icmp_bytes) {
-        if ip.header.next_level_protocol == IpNextProtocol::Icmp {
-            if let Ok(icmp) = IcmpPacket::try_from_bytes(ip.payload()) {
-                match icmp.header.icmp_type {
-                    IcmpType::DestinationUnreachable => {
-                        return true;
-                    }
-                    _ => return false,
-                }
-            }
-        }
-    }
-    false
-}
-
-/// Check if the ICMPv6 message is Port Unreachable
-/// The IPv6 header is automatically cropped off when recvfrom() is used.
-fn is_port_unreach_v6(icmp_bytes: &[u8]) -> bool {
-    if let Ok(icmp6) = Icmpv6Packet::try_from_buf(icmp_bytes) {
-        match icmp6.header.icmpv6_type {
-            Icmpv6Type::DestinationUnreachable => {
-                return true;
-            }
-            _ => return false,
-        }
-    }
-    false
-}
-
-/// UDP Ping using ICMP Port Unreachable messages
 pub async fn udp_ping_icmp_unreach(
     app: &AppHandle,
     run_id: &str,
@@ -62,8 +26,7 @@ pub async fn udp_ping_icmp_unreach(
     token: CancellationToken,
 ) -> Result<PingStat> {
     let dst_ip = setting.ip_addr;
-    //let dst_port = setting.port.unwrap_or(DEFAULT_BASE_TARGET_UDP_PORT);
-    let dst_port = DEFAULT_BASE_TARGET_UDP_PORT;
+    let dst_port = setting.port.unwrap_or(DEFAULT_BASE_TARGET_UDP_PORT);
     let target = SocketAddr::new(dst_ip, dst_port);
     // UDP Socket for sending UDP packets
     let mut ucfg = UdpConfig::new();
@@ -75,9 +38,6 @@ pub async fn udp_ping_icmp_unreach(
         ucfg.hoplimit = Some(setting.hop_limit as u32);
         ucfg.bind_addr = Some(SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0));
     }
-    let udp = AsyncUdpSocket::from_config(&ucfg)?;
-
-    let local_addr = udp.local_addr()?;
 
     // ICMP Socket for receiving ICMP Port Unreachable messages
     let icmp_kind = if dst_ip.is_ipv4() {
@@ -85,7 +45,11 @@ pub async fn udp_ping_icmp_unreach(
     } else {
         IcmpKind::V6
     };
-    let icmp = AsyncIcmpSocket::new(&IcmpConfig::new(icmp_kind)).await?;
+    let config = IcmpConfig::new(icmp_kind);
+    // Linux ping sockets only deliver replies to their own echo requests.
+    #[cfg(target_os = "linux")]
+    let config = config.with_sock_type(crate::socket::icmp::IcmpSocketType::Raw);
+    let icmp = AsyncIcmpSocket::new(&config).await?;
 
     let mut samples = Vec::with_capacity(setting.count as usize);
     let mut rtts = Vec::<u64>::new();
@@ -102,6 +66,8 @@ pub async fn udp_ping_icmp_unreach(
             );
             return Err(anyhow::anyhow!("cancelled"));
         }
+        let udp = AsyncUdpSocket::from_config(&ucfg)?;
+        let local_addr = udp.local_addr()?;
         let payload = Bytes::from_static(b"netd");
         let sent_at = Instant::now();
 
@@ -118,24 +84,22 @@ pub async fn udp_ping_icmp_unreach(
 
             let matched = tokio::time::timeout(to, async {
                 loop {
-                    let (n, _from) = icmp.recv_from(&mut buf).await?;
-                    let ok = match (dst_ip, local_addr.ip()) {
-                        (IpAddr::V4(_d), IpAddr::V4(_s)) => is_port_unreach_v4(&buf[..n]),
-                        (IpAddr::V6(_d), IpAddr::V6(_s)) => is_port_unreach_v6(&buf[..n]),
-                        _ => false,
-                    };
+                    let (n, from) = icmp.recv_from(&mut buf).await?;
+                    let ok = match_udp_reply(target, local_addr.port(), from.ip(), &buf[..n])
+                        == Some(true);
                     if ok {
                         break Ok::<_, std::io::Error>(());
                     }
                 }
             })
-            .await
-            .is_ok();
+            .await;
 
-            if matched {
+            if matches!(matched, Ok(Ok(()))) {
                 let rtt = sent_at.elapsed().as_millis() as u64;
                 rtt_ms = Some(rtt);
                 rtts.push(rtt);
+            } else if let Ok(Err(error)) = matched {
+                status = ProbeStatus::with_error_message(format!("recv error: {error}"));
             } else {
                 status = ProbeStatus::with_timeout_message(format!(
                     "timeout (>{}ms)",
