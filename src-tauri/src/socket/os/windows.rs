@@ -13,7 +13,6 @@ type c_int = i32;
 #[allow(non_camel_case_types)]
 type c_long = i32;
 
-type DWORD = u32;
 use windows_sys::Win32::Networking::WinSock::SIO_RCVALL;
 use windows_sys::Win32::System::Threading::INFINITE;
 
@@ -23,7 +22,7 @@ type u_long = u32;
 use windows_sys::Win32::Networking::WinSock::{self as sock, SOCKET, WSA_FLAG_NO_HANDLE_INHERIT};
 
 pub(crate) const NO_INHERIT: c_int = 1 << (c_int::BITS - 1);
-pub(crate) const MAX_BUF_LEN: usize = <c_int>::max_value() as usize;
+pub(crate) const MAX_BUF_LEN: usize = c_int::MAX as usize;
 
 macro_rules! syscall {
     ($fn: ident ( $($arg: expr),* $(,)* ), $err_test: path, $err_value: expr) => {{
@@ -56,7 +55,7 @@ pub(crate) fn ioctlsocket(socket: SOCKET, cmd: c_long, payload: &mut u_long) -> 
 pub(crate) fn create_socket(family: c_int, mut ty: c_int, protocol: c_int) -> io::Result<SOCKET> {
     init_socket();
     let flags = if ty & NO_INHERIT != 0 {
-        ty = ty & !NO_INHERIT;
+        ty &= !NO_INHERIT;
         WSA_FLAG_NO_HANDLE_INHERIT
     } else {
         0
@@ -103,7 +102,7 @@ pub(crate) unsafe fn setsockopt<T>(
     syscall!(
         setsockopt(
             socket,
-            level as i32,
+            level,
             optname,
             (&optval as *const T).cast(),
             mem::size_of::<T>() as c_int,
@@ -114,9 +113,9 @@ pub(crate) unsafe fn setsockopt<T>(
     .map(|_| ())
 }
 
-pub(crate) fn into_ms(duration: Option<Duration>) -> DWORD {
+pub(crate) fn into_ms(duration: Option<Duration>) -> u32 {
     duration
-        .map(|duration| min(duration.as_millis(), INFINITE as u128) as DWORD)
+        .map(|duration| min(duration.as_millis(), INFINITE as u128) as u32)
         .unwrap_or(0)
 }
 
@@ -151,7 +150,7 @@ pub(crate) fn recv_from(
             );
             match res {
                 Ok(n) => Ok(n as usize),
-                Err(ref err) if err.raw_os_error() == Some(sock::WSAESHUTDOWN as i32) => Ok(0),
+                Err(ref err) if err.raw_os_error() == Some(sock::WSAESHUTDOWN) => Ok(0),
                 Err(err) => Err(err),
             }
         })

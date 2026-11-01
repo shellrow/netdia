@@ -16,7 +16,7 @@ pub async fn udp_ping_icmp_unreach(
     // and it needs admin privileges.
     // For cross-platform, non-admin, and not rely on npcap/winpcap, we skip implementing this feature on Windows.
     // For now, just return an error.
-    return Err(anyhow::anyhow!(
+    Err(anyhow::anyhow!(
         "UDP ping via ICMP Port Unreachable is not supported on Windows."
-    ));
+    ))
 }

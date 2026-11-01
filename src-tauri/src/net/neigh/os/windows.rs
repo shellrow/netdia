@@ -35,10 +35,7 @@ fn dump_ipnet(af: ADDRESS_FAMILY) -> io::Result<HashMap<IpAddr, MacAddr>> {
         let mut table_ptr: *mut MIB_IPNET_TABLE2 = ptr::null_mut();
         let ret = GetIpNetTable2(af, &mut table_ptr);
         if ret != NO_ERROR {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("GetIpNetTable2 failed: {ret}"),
-            ));
+            return Err(io::Error::other(format!("GetIpNetTable2 failed: {ret}")));
         }
         if table_ptr.is_null() {
             return Ok(out);
