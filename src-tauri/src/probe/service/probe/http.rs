@@ -108,7 +108,10 @@ impl HttpProbe {
                     ctx.ip,
                     ctx.probe.port
                 );
-                let payload: Vec<u8> = payload_builder.payload(PayloadContext::default())?;
+                let payload: Vec<u8> = payload_builder.payload(PayloadContext {
+                    hostname: Some(&hostname),
+                    path: Some("/"),
+                })?;
                 timeout(ctx.timeout, tcp_stream.write_all(&payload)).await??;
                 tcp_stream.flush().await?;
                 let res: Vec<u8> =
@@ -154,7 +157,7 @@ impl HttpProbe {
                     ctx.probe.port
                 );
                 let payload_ctx = PayloadContext {
-                    hostname: ctx.hostname.as_deref(),
+                    hostname: Some(&hostname),
                     path: Some("/"),
                 };
                 let payload: Vec<u8> = payload_builder.payload(payload_ctx)?;
@@ -237,7 +240,10 @@ impl HttpProbe {
                     ctx.ip,
                     ctx.probe.port
                 );
-                let payload: Vec<u8> = payload_builder.payload(PayloadContext::default())?;
+                let payload: Vec<u8> = payload_builder.payload(PayloadContext {
+                    hostname: Some(&hostname),
+                    path: Some("/"),
+                })?;
                 timeout(ctx.timeout, tcp_stream.write_all(&payload)).await??;
                 tcp_stream.flush().await?;
                 let res: Vec<u8> =
@@ -279,5 +285,119 @@ impl HttpProbe {
             _ => {}
         }
         Err(anyhow::anyhow!("Failed to probe HTTP service at {}", addr))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        model::endpoint::TransportProtocol,
+        probe::service::probe::{PayloadEncoding, PortProbe},
+    };
+    use std::time::Duration;
+    use tokio::{io::AsyncReadExt, net::TcpListener};
+
+    #[tokio::test]
+    async fn options_probe_sends_request_and_reads_response() {
+        crate::command::scan::init_probe_db().await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") && request.len() < 512 {
+                request.push(stream.read_u8().await.unwrap());
+            }
+            assert!(request.starts_with(b"OPTIONS / HTTP/1.0"));
+            stream
+                .write_all(b"HTTP/1.0 200 OK\r\nServer: fixture\r\n\r\n")
+                .await
+                .unwrap();
+        });
+        let result = HttpProbe::run(ProbeContext {
+            ip: address.ip(),
+            hostname: None,
+            probe: PortProbe {
+                probe_id: ServiceProbe::TcpHTTPOptions,
+                probe_name: "options".into(),
+                port: address.port(),
+                transport: TransportProtocol::Tcp,
+                payload: "OPTIONS / HTTP/1.0\r\n\r\n".into(),
+                payload_encoding: PayloadEncoding::Raw,
+            },
+            timeout: Duration::from_secs(2),
+            max_read_size: 1024,
+            sni: true,
+            skip_cert_verify: false,
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.service_info.product.as_deref(), Some("fixture"));
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    #[tokio::test]
+    async fn https_probe_without_hostname_uses_ip_in_host_header() {
+        crate::command::scan::init_probe_db().await.unwrap();
+        let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![certificate.cert.der().clone()],
+            rustls::pki_types::PrivatePkcs8KeyDer::from(certificate.signing_key.serialize_der())
+                .into(),
+        )
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = tokio_rustls::TlsAcceptor::from(Arc::new(config))
+                .accept(stream)
+                .await
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") && request.len() < 512 {
+                request.push(stream.read_u8().await.unwrap());
+            }
+            assert!(String::from_utf8(request)
+                .unwrap()
+                .contains("Host: 127.0.0.1\r\n"));
+            stream
+                .write_all(b"HTTP/1.0 200 OK\r\nServer: fixture\r\n\r\n")
+                .await
+                .unwrap();
+            stream.shutdown().await.unwrap();
+        });
+        let result = HttpProbe::run(ProbeContext {
+            ip: address.ip(),
+            hostname: None,
+            probe: PortProbe {
+                probe_id: ServiceProbe::TcpHTTPSGet,
+                probe_name: "https".into(),
+                port: address.port(),
+                transport: TransportProtocol::Tcp,
+                payload: "GET $PATH HTTP/1.1\r\nHost: $HOST\r\nConnection: close\r\n\r\n".into(),
+                payload_encoding: PayloadEncoding::Raw,
+            },
+            timeout: Duration::from_secs(2),
+            max_read_size: 1024,
+            sni: true,
+            skip_cert_verify: true,
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.service_info.product.as_deref(), Some("fixture"));
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
