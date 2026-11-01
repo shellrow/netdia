@@ -52,7 +52,7 @@ struct ProgressState {
     start: Instant,
     last_tick: Instant,
     last_bytes: u64,
-    warmup_marked: bool,
+    warmup_elapsed: Option<Duration>,
     warmup_bytes: u64,
 }
 
@@ -144,7 +144,7 @@ fn init_progress() -> ProgressState {
         start,
         last_tick: start,
         last_bytes: 0,
-        warmup_marked: false,
+        warmup_elapsed: None,
         warmup_bytes: 0,
     }
 }
@@ -154,17 +154,21 @@ fn compute_stable_average(
     transferred: u64,
     elapsed: Duration,
 ) -> StableAverage {
-    if !progress.warmup_marked && elapsed >= WARMUP {
-        progress.warmup_marked = true;
+    if progress.warmup_elapsed.is_none() && elapsed >= WARMUP {
+        progress.warmup_elapsed = Some(elapsed);
         progress.warmup_bytes = transferred;
     }
 
-    if progress.warmup_marked {
+    if let Some(baseline) = progress
+        .warmup_elapsed
+        .filter(|baseline| elapsed > *baseline)
+    {
         StableAverage {
-            elapsed: elapsed.saturating_sub(WARMUP),
+            elapsed: elapsed - baseline,
             transferred_bytes: transferred.saturating_sub(progress.warmup_bytes),
         }
     } else {
+        // A completed short transfer may have no samples after warm-up.
         StableAverage {
             elapsed,
             transferred_bytes: transferred,
@@ -262,6 +266,29 @@ pub async fn run_speedtest(
     .await
 }
 
+async fn receive_download(
+    response: reqwest::Response,
+    target: u64,
+    transferred: &AtomicU64,
+    cancel: &CancellationToken,
+) -> Result<()> {
+    let mut stream = response.error_for_status()?.bytes_stream();
+    let mut received = 0;
+    while received < target {
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Ok(()),
+            chunk = stream.next() => {
+                let bytes = chunk.context("Download ended before the requested byte count")??;
+                let accepted = (bytes.len() as u64).min(target - received);
+                received += accepted;
+                transferred.fetch_add(accepted, Ordering::Relaxed);
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn download_test(
     app: &RunEmitter<'_>,
     client: &Client,
@@ -289,25 +316,7 @@ async fn download_test(
                 anyhow::bail!("download http {}", resp.status());
             }
 
-            let mut stream = resp.bytes_stream();
-            loop {
-                tokio::select! {
-                    _ = cancel.cancelled() => {
-                        break;
-                    }
-                    chunk = stream.next() => {
-                        match chunk {
-                            Some(Ok(b)) => {
-                                transferred.fetch_add(b.len() as u64, Ordering::Relaxed);
-                            }
-                            Some(Err(e)) => {
-                                return Err(anyhow::anyhow!(e));
-                            }
-                            None => break,
-                        }
-                    }
-                }
-            }
+            receive_download(resp, per_stream_target_bytes, &transferred, &cancel).await?;
 
             Ok::<(), anyhow::Error>(())
         });
@@ -414,25 +423,7 @@ async fn file_download_test(
                 anyhow::bail!("file download http {}", resp.status());
             }
 
-            let mut stream = resp.bytes_stream();
-            loop {
-                tokio::select! {
-                    _ = cancel.cancelled() => {
-                        break;
-                    }
-                    chunk = stream.next() => {
-                        match chunk {
-                            Some(Ok(b)) => {
-                                transferred.fetch_add(b.len() as u64, Ordering::Relaxed);
-                            }
-                            Some(Err(e)) => {
-                                return Err(anyhow::anyhow!(e));
-                            }
-                            None => break,
-                        }
-                    }
-                }
-            }
+            receive_download(resp, per_stream_target_bytes, &transferred, &cancel).await?;
 
             Ok::<(), anyhow::Error>(())
         });
@@ -670,4 +661,72 @@ fn emit_speedtest_update(
 
 fn emit_speedtest_done(app: &RunEmitter<'_>, payload: SpeedtestDonePayload) {
     let _ = app.emit("speedtest:done", payload);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn average_uses_actual_warmup_sample_time() {
+        let mut progress = init_progress();
+        compute_stable_average(&mut progress, 1000, Duration::from_millis(900));
+        let average = compute_stable_average(&mut progress, 2000, Duration::from_millis(1100));
+        assert_eq!(average.elapsed, Duration::from_millis(200));
+        assert_eq!(average.transferred_bytes, 1000);
+    }
+
+    #[test]
+    fn completion_at_first_warmup_sample_preserves_average() {
+        let mut progress = init_progress();
+        let average = compute_stable_average(&mut progress, 1000, Duration::from_secs(1));
+        assert_eq!(average.elapsed, Duration::from_secs(1));
+        assert_eq!(average.transferred_bytes, 1000);
+    }
+    #[tokio::test]
+    async fn downloads_reject_short_bodies_and_bound_excess_bytes() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        for (body, target, succeeds) in [("abc", 4, false), ("abcde", 4, true), ("abcd", 4, true)] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                assert!(socket.read(&mut request).await.unwrap() > 0);
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            });
+            let client = Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(2))
+                .build()
+                .unwrap();
+            let response = client
+                .get(format!("http://{address}"))
+                .send()
+                .await
+                .unwrap();
+            let transferred = AtomicU64::new(0);
+            let result =
+                receive_download(response, target, &transferred, &CancellationToken::new()).await;
+            assert_eq!(result.is_ok(), succeeds);
+            assert_eq!(
+                transferred.load(Ordering::Relaxed),
+                (body.len() as u64).min(target)
+            );
+            server.await.unwrap();
+        }
+    }
 }
