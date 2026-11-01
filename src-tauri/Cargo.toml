@@ -40,7 +40,6 @@ futures = {version = "0.3", features = ["executor", "thread-pool"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }
 tokio-util = "0.7"
-tokio-tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots", "http2", "system-proxy", "stream" ] }
 hostname = { version = "0.4" }
 os_info = { version = "3.12" }
