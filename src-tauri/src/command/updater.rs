@@ -13,7 +13,6 @@ use time::format_description::well_known::Rfc3339;
 
 #[cfg(windows)]
 const WINDOWS_STORE_URL: &str = "ms-windows-store://pdp/?productid=9NLQ03PT1DXQ";
-//const WINDOWS_STORE_URL: &str = "https://apps.microsoft.com/detail/9NLQ03PT1DXQ";
 
 #[allow(dead_code)]
 #[derive(Default)]
@@ -97,14 +96,14 @@ pub async fn check_update(
     _pending: State<'_, PendingUpdate>,
 ) -> Result<UpdateInfo, String> {
     // Windows: DO NOT support in-app update, open Microsoft Store instead
-    return Ok(UpdateInfo {
+    Ok(UpdateInfo {
         available: false,
         version: None,
         current_version: None,
         notes: None,
         pub_date: None,
         store_url: Some(WINDOWS_STORE_URL.to_string()),
-    });
+    })
 }
 
 #[cfg(not(desktop))]
@@ -161,9 +160,7 @@ pub async fn install_update(
                     content_length,
                 });
             },
-            || {
-                let _ = on_event.send(DownloadEvent::Finished);
-            },
+            || {},
         )
         .await;
 
@@ -174,6 +171,7 @@ pub async fn install_update(
         return Err(e.to_string());
     }
 
+    let _ = on_event.send(DownloadEvent::Finished);
     Ok(())
 }
 
@@ -184,7 +182,7 @@ pub async fn install_update(
     _on_event: Channel<DownloadEvent>,
 ) -> Result<(), String> {
     // Windows: DO NOT support in-app update, open Microsoft Store instead
-    return Ok(());
+    Ok(())
 }
 
 #[cfg(not(desktop))]
