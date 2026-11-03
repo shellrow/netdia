@@ -274,10 +274,7 @@ impl AsyncTcpSocket {
                     Ok(stream)
                 }
             }
-            Err(e) => {
-                println!("Failed to connect: {}", e);
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 

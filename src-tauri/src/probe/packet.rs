@@ -139,6 +139,65 @@ pub fn match_trace_reply(dst: IpAddr, from: IpAddr, buf: &[u8], id: u16, seq: u1
     Some(false)
 }
 
+/// Match an ICMP error to the quoted UDP destination and both ports.
+/// Returns true only for a port-unreachable reply from the destination itself.
+#[cfg(any(unix, test))]
+pub fn match_udp_reply(
+    dst: std::net::SocketAddr,
+    source_port: u16,
+    from: IpAddr,
+    buf: &[u8],
+) -> Option<bool> {
+    let outer;
+    let payload;
+    let icmp = if dst.is_ipv4() {
+        outer = Ipv4Packet::try_from_buf(buf).ok()?;
+        if outer.header.next_level_protocol != nex_packet::ip::IpNextProtocol::Icmp {
+            return None;
+        }
+        payload = outer.payload();
+        payload.as_ref()
+    } else {
+        buf
+    };
+    let reached = match (dst.is_ipv4(), *icmp.first()?, *icmp.get(1)?) {
+        (true, 3, 3) | (false, 1, 4) if from == dst.ip() => true,
+        (true, 11, 0) | (false, 3, 0) => false,
+        _ => return None,
+    };
+    let quoted = icmp.get(8..)?;
+    let udp = match dst.ip() {
+        IpAddr::V4(ip) => {
+            let header_len = usize::from(*quoted.first()? & 15) * 4;
+            if quoted[0] >> 4 != 4
+                || header_len < 20
+                || quoted.get(9) != Some(&17)
+                || quoted.get(16..20)? != ip.octets()
+                || u16::from_be_bytes(quoted.get(6..8)?.try_into().ok()?) & 0x1fff != 0
+            {
+                return None;
+            }
+            quoted.get(header_len..)?
+        }
+        IpAddr::V6(ip) => {
+            if quoted.first()? >> 4 != 6
+                || quoted.get(6) != Some(&17)
+                || quoted.get(24..40)? != ip.octets()
+            {
+                return None;
+            }
+            quoted.get(40..)?
+        }
+    };
+    if udp.len() < 8
+        || udp.get(..2)? != source_port.to_be_bytes()
+        || udp.get(2..4)? != dst.port().to_be_bytes()
+    {
+        return None;
+    }
+    Some(reached)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,7 +250,6 @@ mod tests {
         let id = socket.echo_identifier(0x1234).unwrap();
         for seq in 1..=3 {
             let packet = build_icmp_echo_bytes(ip, ip, id, seq, b"netd").unwrap();
-            eprintln!("{address}: sending {packet:02x?}, expected id={id}, seq={seq}");
             socket
                 .send_to(&packet, SocketAddr::new(ip, 0))
                 .await
@@ -200,7 +258,6 @@ mod tests {
                 let mut buffer = [0; 2048];
                 loop {
                     let (len, from) = socket.recv_from(&mut buffer).await.unwrap();
-                    eprintln!("{address}: received {:02x?}", &buffer[..len]);
                     if matches_echo_reply(ip, from.ip(), &buffer[..len], id, seq) {
                         assert_eq!(
                             match_trace_reply(ip, from.ip(), &buffer[..len], id, seq),
@@ -285,5 +342,118 @@ mod tests {
             match_trace_reply(dst, router, &reply[..reply.len() - 4], 42, 7),
             Some(false)
         );
+    }
+}
+
+#[cfg(test)]
+mod udp_tests {
+    use super::*;
+    use std::net::SocketAddr;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "requires ICMP error socket permission and dual-family loopback"]
+    async fn live_udp_port_unreachable() {
+        use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
+        use std::time::Duration;
+
+        for address in ["127.0.0.1:0", "[::1]:0"] {
+            let reservation = std::net::UdpSocket::bind(address).unwrap();
+            let target = reservation.local_addr().unwrap();
+            let kind = if target.is_ipv4() {
+                IcmpKind::V4
+            } else {
+                IcmpKind::V6
+            };
+            let config = IcmpConfig::new(kind);
+            #[cfg(target_os = "linux")]
+            let config = config.with_sock_type(crate::socket::icmp::IcmpSocketType::Raw);
+            let icmp = AsyncIcmpSocket::new(&config).await.unwrap();
+            let udp = tokio::net::UdpSocket::bind(address).await.unwrap();
+            let source_port = udp.local_addr().unwrap().port();
+            drop(reservation);
+            udp.send_to(b"netd", target).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(2), async {
+                let mut buffer = [0; 2048];
+                loop {
+                    let (len, from) = icmp.recv_from(&mut buffer).await.unwrap();
+                    if match_udp_reply(target, source_port, from.ip(), &buffer[..len]) == Some(true)
+                    {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("no matching UDP port-unreachable reply from loopback");
+        }
+    }
+
+    fn reply(dst: SocketAddr, source: u16, kind: u8, code: u8) -> Vec<u8> {
+        let mut icmp = vec![kind, code, 0, 0, 0, 0, 0, 0];
+        let mut quoted = vec![0; if dst.is_ipv4() { 20 } else { 40 }];
+        match dst.ip() {
+            IpAddr::V4(ip) => {
+                quoted[0] = 0x45;
+                quoted[9] = 17;
+                quoted[16..20].copy_from_slice(&ip.octets());
+            }
+            IpAddr::V6(ip) => {
+                quoted[0] = 0x60;
+                quoted[6] = 17;
+                quoted[24..40].copy_from_slice(&ip.octets());
+            }
+        }
+        quoted.extend_from_slice(&source.to_be_bytes());
+        quoted.extend_from_slice(&dst.port().to_be_bytes());
+        quoted.extend_from_slice(&[0, 12, 0, 0]);
+        icmp.extend_from_slice(&quoted);
+        if dst.is_ipv4() {
+            let mut ip = vec![0; 20];
+            ip[0] = 0x45;
+            ip[9] = 1;
+            let len = (20 + icmp.len()) as u16;
+            ip[2..4].copy_from_slice(&len.to_be_bytes());
+            ip.extend_from_slice(&icmp);
+            ip
+        } else {
+            icmp
+        }
+    }
+
+    #[test]
+    fn udp_errors_require_matching_destination_ports_type_and_code() {
+        for address in ["192.0.2.1:33435", "[2001:db8::1]:33435"] {
+            let dst: SocketAddr = address.parse().unwrap();
+            let (kind, code) = if dst.is_ipv4() { (3, 3) } else { (1, 4) };
+            let bytes = reply(dst, 50000, kind, code);
+            assert_eq!(match_udp_reply(dst, 50000, dst.ip(), &bytes), Some(true));
+            assert_eq!(match_udp_reply(dst, 50001, dst.ip(), &bytes), None);
+            let mut other = dst;
+            other.set_port(33436);
+            assert_eq!(match_udp_reply(other, 50000, dst.ip(), &bytes), None);
+            let other_ip = if dst.is_ipv4() {
+                "192.0.2.2"
+            } else {
+                "2001:db8::2"
+            }
+            .parse()
+            .unwrap();
+            assert_eq!(match_udp_reply(dst, 50000, other_ip, &bytes), None);
+            other.set_ip(other_ip);
+            other.set_port(dst.port());
+            assert_eq!(match_udp_reply(other, 50000, other_ip, &bytes), None);
+            for n in 0..bytes.len() {
+                assert_eq!(match_udp_reply(dst, 50000, dst.ip(), &bytes[..n]), None);
+            }
+            assert_eq!(
+                match_udp_reply(dst, 50000, dst.ip(), &reply(dst, 50000, kind, 0)),
+                None
+            );
+            let exceeded = reply(dst, 50000, if dst.is_ipv4() { 11 } else { 3 }, 0);
+            assert_eq!(
+                match_udp_reply(dst, 50000, other_ip, &exceeded),
+                Some(false)
+            );
+        }
     }
 }

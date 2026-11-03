@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const SEQ_BASE: u32 = 0x6E_65_74_64; // netd (netdia)
+const SEQ_BASE: u32 = u32::from_be_bytes(*b"netd"); // netd (netdia)
 const RECV_BUFSZ: usize = 1 << 20; // 1MB
 const RECV_TIMEOUT: Duration = Duration::from_secs(2);
 const NLMSG_ALIGNTO: usize = 4;
@@ -25,11 +25,11 @@ fn nlmsg_align(n: usize) -> usize {
 }
 
 fn open_route_socket() -> io::Result<Socket> {
-    let mut sock = Socket::new(NETLINK_ROUTE)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("netlink open: {e}")))?;
+    let mut sock =
+        Socket::new(NETLINK_ROUTE).map_err(|e| io::Error::other(format!("netlink open: {e}")))?;
     sock.bind_auto()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("bind_auto: {e}")))?;
-    sock.set_non_blocking(true).ok();
+        .map_err(|e| io::Error::other(format!("bind_auto: {e}")))?;
+    sock.set_non_blocking(true)?;
     Ok(sock)
 }
 
@@ -53,7 +53,7 @@ fn send_dump(sock: &mut Socket, msg: RouteNetlinkMessage, seq: u32) -> io::Resul
 
     let kernel = SocketAddr::new(0, 0);
     sock.send_to(&buf, &kernel, 0)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("netlink send: {e}")))?;
+        .map_err(|e| io::Error::other(format!("netlink send: {e}")))?;
     Ok(())
 }
 
@@ -67,9 +67,17 @@ fn recv_multi(
     let deadline = Instant::now() + RECV_TIMEOUT;
 
     loop {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                ErrorKind::TimedOut,
+                "netlink dump timed out",
+            ));
+        }
         match sock.recv_from(&mut &mut buf[..], 0) {
             Ok((size, from)) => {
-                let _ = from == kernel;
+                if from != kernel {
+                    continue;
+                }
                 let mut offset = 0usize;
 
                 while offset < size {
@@ -100,10 +108,9 @@ fn recv_multi(
                         NetlinkPayload::Done(_) => return Ok(out),
                         NetlinkPayload::Error(e) => {
                             if let Some(code) = e.code {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::Other,
-                                    format!("netlink error: code={}", code),
-                                ));
+                                return Err(io::Error::other(format!(
+                                    "netlink error: code={code}"
+                                )));
                             }
                         }
                         NetlinkPayload::Noop | NetlinkPayload::Overrun(_) => { /* skip */ }
@@ -114,9 +121,6 @@ fn recv_multi(
                 }
             }
             Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                if Instant::now() >= deadline {
-                    return Ok(out);
-                }
                 thread::sleep(Duration::from_millis(5));
             }
             Err(e) => return Err(e),
@@ -238,10 +242,8 @@ fn neighs_to_map(neighs: Vec<NeighbourMessage>) -> io::Result<HashMap<IpAddr, Ma
                 NeighbourAttribute::Destination(a) => {
                     ip = neigh_addr_to_ip(a);
                 }
-                NeighbourAttribute::LinkLocalAddress(bytes) => {
-                    if bytes.len() == 6 {
-                        mac = Some([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]]);
-                    }
+                NeighbourAttribute::LinkLocalAddress(bytes) if bytes.len() == 6 => {
+                    mac = Some([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]]);
                 }
                 _ => {}
             }

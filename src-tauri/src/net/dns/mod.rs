@@ -116,7 +116,7 @@ pub async fn resolve_hosts(inputs: &[String], timeout: Duration, concurrency: us
     }
 
     // Resolve hostnames concurrently
-    let mut st = stream::iter(hostnames.into_iter())
+    let mut st = stream::iter(hostnames)
         .map(|hn| async move {
             let ips = lookup_ip(&hn, timeout).await.unwrap_or_default();
             (hn, ips)

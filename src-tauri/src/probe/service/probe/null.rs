@@ -37,11 +37,11 @@ fn looks_like_text_line(s: &str) -> bool {
 /// 3. If neither exists, use the first line (raw)
 fn parse_banner(bytes: &[u8], max_preview: usize) -> BannerLite {
     let raw = String::from_utf8_lossy(bytes);
-    let raw_text = if raw.len() > max_preview {
-        raw[..max_preview].to_string()
-    } else {
-        raw.to_string()
-    };
+    let mut end = max_preview.min(raw.len());
+    while !raw.is_char_boundary(end) {
+        end -= 1;
+    }
+    let raw_text = raw[..end].to_string();
 
     let mut lines = raw_text.split('\n').map(|l| l.trim_end_matches('\r'));
 
@@ -129,5 +129,15 @@ impl NullProbe {
             service_info: svc,
         };
         Ok(probe_result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn banner_limit_never_splits_utf8_or_replacement_characters() {
+        assert_eq!(super::parse_banner("aéz".as_bytes(), 2).raw_text, "a");
+        assert_eq!(super::parse_banner(&[b'a', 0xff], 2).raw_text, "a");
+        assert_eq!(super::parse_banner("é".as_bytes(), 0).raw_text, "");
     }
 }

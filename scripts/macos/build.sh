@@ -33,24 +33,16 @@ echo "OutputDir: $OUT_DIR"
 # -------- build --------
 echo ""
 echo "== Build (macOS) =="
+[[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] || { echo "This script requires Apple Silicon macOS"; exit 1; }
+cd "$REPO_ROOT"
 cargo tauri build
 
 # -------- detect version from dmg --------
 DMG_DIR="$REPO_ROOT/src-tauri/target/release/bundle/dmg"
 
-DMG_FILE="$(ls -t "$DMG_DIR"/${APP_NAME}_*_aarch64.dmg 2>/dev/null | head -n 1 || true)"
-if [[ -z "$DMG_FILE" ]]; then
-  echo "No dmg found in $DMG_DIR"
-  exit 1
-fi
-
-# NetDia_0.4.0_aarch64.dmg -> 0.4.0
-VERSION="$(basename "$DMG_FILE" | sed -E "s/^${APP_NAME}_([0-9]+\.[0-9]+\.[0-9]+)_aarch64\.dmg$/\1/")"
-
-if [[ -z "$VERSION" ]]; then
-  echo "Failed to parse version from dmg filename"
-  exit 1
-fi
+VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+DMG_FILE="$DMG_DIR/${APP_NAME}_${VERSION}_aarch64.dmg"
+[[ -f "$DMG_FILE" ]] || { echo "DMG not found: $DMG_FILE"; exit 1; }
 
 echo "Detected version: $VERSION"
 
@@ -76,6 +68,8 @@ echo "APP: $APP_DST"
 
 cp -f "$DMG_SRC" "$DMG_DST"
 echo "DMG: $DMG_DST"
+cp "$REPO_ROOT/src-tauri/target/release/bundle/macos/NetDia.app.tar.gz" "$OUT_DIR/"
+cp "$REPO_ROOT/src-tauri/target/release/bundle/macos/NetDia.app.tar.gz.sig" "$OUT_DIR/"
 
 # -------- hashes --------
 echo ""

@@ -38,7 +38,7 @@ pub async fn port_scan(
     let progress = Arc::new(ThrottledProgress::new(total));
 
     // Create tasks for each port and collect results as they complete.
-    let mut tasks = stream::iter(ports.into_iter())
+    let mut tasks = stream::iter(ports)
         .map(|port| {
             let app = app.clone();
             let progress = progress.clone();

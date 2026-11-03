@@ -20,6 +20,12 @@ pub async fn reload_interfaces(state: &Arc<AppState>) -> Result<()> {
 
     {
         let mut ifaces = state.interfaces.lock().await;
+        let mut stats = state.stats.lock().await;
+        stats.retain(|index, _| {
+            map.get(index)
+                .zip(ifaces.get(index))
+                .is_some_and(|(new, old)| new.name == old.name && new.mac_addr == old.mac_addr)
+        });
         *ifaces = map;
     }
 
@@ -40,7 +46,11 @@ pub async fn update_interface_state(state: &Arc<AppState>) -> Result<()> {
     for (ifindex, iface) in ifaces.iter_mut() {
         // Update oper_state and stats
         iface.update_oper_state();
-        iface.update_stats()?;
+        if let Err(error) = iface.update_stats() {
+            stats_cache.remove(ifindex);
+            tracing::warn!(interface = iface.name, %error, "failed to read interface statistics");
+            continue;
+        }
         let tick_ts = Instant::now();
 
         // Calculate bps if previous stats exist

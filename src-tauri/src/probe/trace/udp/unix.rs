@@ -1,17 +1,11 @@
 use crate::events::EventEmitter;
 use crate::model::trace::{TraceCancelledPayload, TracerouteSetting};
+use crate::probe::packet::match_udp_reply;
 use crate::socket::icmp::{AsyncIcmpSocket, IcmpConfig, IcmpKind};
 use crate::socket::udp::{AsyncUdpSocket, UdpConfig};
 use crate::socket::SocketFamily;
 use anyhow::Result;
 use bytes::Bytes;
-use nex_packet::icmp::IcmpPacket;
-use nex_packet::icmp::IcmpType;
-use nex_packet::icmpv6::Icmpv6Packet;
-use nex_packet::icmpv6::Icmpv6Type;
-use nex_packet::ip::IpNextProtocol;
-use nex_packet::ipv4::Ipv4Packet;
-use nex_packet::packet::Packet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
@@ -19,26 +13,6 @@ use tokio_util::sync::CancellationToken;
 
 /// Default base target UDP port for traceroute
 const DEFAULT_BASE_TARGET_UDP_PORT: u16 = 33435;
-
-/// Check if the ICMPv4 is a Destination Unreachable for the given destination IP
-fn is_port_unreach_v4(icmp_bytes: &[u8]) -> bool {
-    if let Ok(ip) = Ipv4Packet::try_from_buf(icmp_bytes) {
-        if ip.header.next_level_protocol == IpNextProtocol::Icmp {
-            if let Ok(icmp) = IcmpPacket::try_from_bytes(ip.payload()) {
-                return matches!(icmp.header.icmp_type, IcmpType::DestinationUnreachable);
-            }
-        }
-    }
-    false
-}
-
-/// Check if the ICMPv6 is a Destination Unreachable for the given destination IP
-fn is_port_unreach_v6(icmp_bytes: &[u8]) -> bool {
-    if let Ok(icmp6) = Icmpv6Packet::try_from_buf(icmp_bytes) {
-        return matches!(icmp6.header.icmpv6_type, Icmpv6Type::DestinationUnreachable);
-    }
-    false
-}
 
 pub async fn udp_traceroute(
     app: &AppHandle,
@@ -56,7 +30,11 @@ pub async fn udp_traceroute(
     } else {
         IcmpKind::V6
     };
-    let icmp = AsyncIcmpSocket::new(&IcmpConfig::new(icmp_kind)).await?;
+    let config = IcmpConfig::new(icmp_kind);
+    // Linux ping sockets only deliver replies to their own echo requests.
+    #[cfg(target_os = "linux")]
+    let config = config.with_sock_type(crate::socket::icmp::IcmpSocketType::Raw);
+    let icmp = AsyncIcmpSocket::new(&config).await?;
 
     let mut reached = false;
 
@@ -110,7 +88,17 @@ pub async fn udp_traceroute(
             }
 
             let mut buf = vec![0u8; 2048];
-            let res = tokio::time::timeout(timeout, icmp.recv_from(&mut buf)).await;
+            let res = tokio::time::timeout(timeout, async {
+                loop {
+                    let (n, from) = icmp.recv_from(&mut buf).await?;
+                    if let Some(reached) =
+                        match_udp_reply(target, local_addr.port(), from.ip(), &buf[..n])
+                    {
+                        return Ok::<_, std::io::Error>((from, reached));
+                    }
+                }
+            })
+            .await;
 
             match res {
                 Err(_) => {
@@ -121,7 +109,7 @@ pub async fn udp_traceroute(
                     best.note = Some(format!("recv error: {e}"));
                     break;
                 }
-                Ok(Ok((n, from))) => {
+                Ok(Ok((from, is_dest))) => {
                     let rtt = sent_at.elapsed().as_millis() as u64;
                     let from_ip = from.ip();
 
@@ -130,15 +118,6 @@ pub async fn udp_traceroute(
                         best.ip_addr = Some(from_ip);
                         best.note = None;
                     }
-
-                    // Strictly speaking, we should check if the response is for the UDP we sent.
-                    // By checking the embedded IP/UDP headers in the ICMP payload.
-                    // For simplicity, we skip that here.
-                    let is_dest = match (dst_ip, local_addr.ip()) {
-                        (IpAddr::V4(_d), IpAddr::V4(_s)) => is_port_unreach_v4(&buf[..n]),
-                        (IpAddr::V6(_d), IpAddr::V6(_s)) => is_port_unreach_v6(&buf[..n]),
-                        _ => false,
-                    };
 
                     if is_dest {
                         best.reached = true;

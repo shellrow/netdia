@@ -2,7 +2,6 @@ use anyhow::{bail, Result};
 use futures::stream::{self, StreamExt};
 use probe::{PortProbe, PortProbeResult, ProbeContext, ServiceProbe};
 use std::time::Duration;
-use tokio::sync::mpsc;
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
     net::TcpStream,
@@ -50,110 +49,105 @@ impl ServiceDetector {
     ) -> Result<Vec<PortProbeResult>> {
         let port_probe_db = db::service::port_probe_db();
         let service_probe_db = db::service::service_probe_db();
-        let (ch_tx, mut ch_rx) = mpsc::unbounded_channel::<Vec<Result<PortProbeResult>>>();
+        let concurrency = config.max_concurrency.max(1);
+        let ports = endpoint.ports;
+        let batches = stream::iter(ports)
+            .map(move |port| {
+                let hostname = endpoint.hostname.clone();
+                let ip = endpoint.ip;
+                let config = config.clone();
+                async move {
+                    // Perform service detection for each endpoint
+                    let mut results: Vec<Result<PortProbeResult>> = Vec::new();
+                    if let Some(probes) = port_probe_db.get(&port) {
+                        for probe in probes {
+                            let probe_payload = match service_probe_db.get(probe) {
+                                Some(payload) => payload,
+                                None => {
+                                    results.push(Err(anyhow::anyhow!(
+                                        "No payload for probe {:?}",
+                                        probe
+                                    )));
+                                    continue;
+                                }
+                            };
+                            let port_probe: PortProbe = PortProbe {
+                                probe_id: probe.clone(),
+                                probe_name: probe_payload.id.clone(),
+                                port: port.number,
+                                transport: port.transport,
+                                payload: probe_payload.payload.clone(),
+                                payload_encoding: probe_payload.payload_encoding,
+                            };
+                            let ctx = ProbeContext {
+                                ip,
+                                hostname: hostname.clone(),
+                                probe: port_probe,
+                                timeout: config.timeout,
+                                max_read_size: config.max_read_size,
+                                sni: config.sni,
+                                skip_cert_verify: config.skip_cert_verify,
+                            };
 
-        let mut results = Vec::new();
-        let recv_task = tokio::spawn(async move {
-            while let Some(port_results) = ch_rx.recv().await {
-                for res in port_results {
-                    match res {
-                        Ok(r) => results.push(r),
-                        Err(e) => tracing::debug!("Probe failed: {}", e),
-                    }
-                }
-            }
-            results
-        });
-
-        let ports = endpoint.ports.clone();
-        let prod = stream::iter(ports).for_each_concurrent(config.max_concurrency, move |port| {
-            let tx = ch_tx.clone();
-            let endpoint = endpoint.clone();
-            let port_probe_db = port_probe_db.clone();
-            let service_probe_db = service_probe_db.clone();
-            async move {
-                // Perform service detection for each endpoint
-                let mut results: Vec<Result<PortProbeResult>> = Vec::new();
-                if let Some(probes) = port_probe_db.get(&port) {
-                    for probe in probes {
-                        let probe_payload = match service_probe_db.get(probe) {
-                            Some(payload) => payload,
-                            None => {
-                                results
-                                    .push(Err(anyhow::anyhow!("No payload for probe {:?}", probe)));
-                                continue;
-                            }
-                        };
-                        let port_probe: PortProbe = PortProbe {
-                            probe_id: probe.clone(),
-                            probe_name: probe_payload.id.clone(),
-                            port: port.number,
-                            transport: port.transport,
-                            payload: probe_payload.payload.clone(),
-                            payload_encoding: probe_payload.payload_encoding,
-                        };
+                            let r = match probe {
+                                ServiceProbe::TcpHTTPGet
+                                | ServiceProbe::TcpHTTPSGet
+                                | ServiceProbe::TcpHTTPOptions => {
+                                    probe::http::HttpProbe::run(ctx).await
+                                }
+                                ServiceProbe::TcpImapCapability
+                                | ServiceProbe::TcpMssqlPrelogin
+                                | ServiceProbe::TcpMemcachedVersion
+                                | ServiceProbe::TcpMqttConnect
+                                | ServiceProbe::TcpMySqlHandshake
+                                | ServiceProbe::TcpOracleTns
+                                | ServiceProbe::TcpPop3Capa
+                                | ServiceProbe::TcpPostgresSslReq
+                                | ServiceProbe::TcpRedisPing
+                                | ServiceProbe::TcpRdpNegotiation
+                                | ServiceProbe::TcpSmbNegotiation
+                                | ServiceProbe::TcpSmtpEhlo => {
+                                    probe::special::SpecialTcpProbe::run(ctx).await
+                                }
+                                ServiceProbe::TcpTlsSession => probe::tls::TlsProbe::run(ctx).await,
+                                ServiceProbe::TcpGenericLines | ServiceProbe::TcpHelp => {
+                                    probe::generic::GenericProbe::run(ctx).await
+                                }
+                                ServiceProbe::UdpDNSVersionBindReq
+                                | ServiceProbe::TcpDNSVersionBindReq => {
+                                    probe::dns::DnsProbe::run(ctx).await
+                                }
+                                ServiceProbe::UdpQuic => probe::quic::QuicProbe::run(ctx).await,
+                                _ => probe::null::NullProbe::run(ctx).await,
+                            };
+                            results.push(r);
+                        }
+                    } else {
                         let ctx = ProbeContext {
-                            ip: endpoint.ip,
-                            hostname: endpoint.hostname.clone(),
-                            probe: port_probe,
+                            ip,
+                            hostname: hostname.clone(),
+                            probe: PortProbe::null_probe(port.number, port.transport),
                             timeout: config.timeout,
                             max_read_size: config.max_read_size,
                             sni: config.sni,
                             skip_cert_verify: config.skip_cert_verify,
                         };
-
-                        let r = match probe {
-                            ServiceProbe::TcpHTTPGet
-                            | ServiceProbe::TcpHTTPSGet
-                            | ServiceProbe::TcpHTTPOptions => {
-                                probe::http::HttpProbe::run(ctx).await
-                            }
-                            ServiceProbe::TcpImapCapability
-                            | ServiceProbe::TcpMssqlPrelogin
-                            | ServiceProbe::TcpMemcachedVersion
-                            | ServiceProbe::TcpMqttConnect
-                            | ServiceProbe::TcpMySqlHandshake
-                            | ServiceProbe::TcpOracleTns
-                            | ServiceProbe::TcpPop3Capa
-                            | ServiceProbe::TcpPostgresSslReq
-                            | ServiceProbe::TcpRedisPing
-                            | ServiceProbe::TcpRdpNegotiation
-                            | ServiceProbe::TcpSmbNegotiation
-                            | ServiceProbe::TcpSmtpEhlo => {
-                                probe::special::SpecialTcpProbe::run(ctx).await
-                            }
-                            ServiceProbe::TcpTlsSession => probe::tls::TlsProbe::run(ctx).await,
-                            ServiceProbe::TcpGenericLines | ServiceProbe::TcpHelp => {
-                                probe::generic::GenericProbe::run(ctx).await
-                            }
-                            ServiceProbe::UdpDNSVersionBindReq
-                            | ServiceProbe::TcpDNSVersionBindReq => {
-                                probe::dns::DnsProbe::run(ctx).await
-                            }
-                            ServiceProbe::UdpQuic => probe::quic::QuicProbe::run(ctx).await,
-                            _ => probe::null::NullProbe::run(ctx).await,
-                        };
-                        results.push(r);
+                        results.push(probe::null::NullProbe::run(ctx).await);
                     }
-                } else {
-                    let ctx = ProbeContext {
-                        ip: endpoint.ip,
-                        hostname: endpoint.hostname.clone(),
-                        probe: PortProbe::null_probe(port.number, port.transport),
-                        timeout: config.timeout,
-                        max_read_size: config.max_read_size,
-                        sni: config.sni,
-                        skip_cert_verify: config.skip_cert_verify,
-                    };
-                    results.push(probe::null::NullProbe::run(ctx).await);
+                    results
                 }
-                let _ = tx.send(results);
-            }
-        });
+            })
+            .buffer_unordered(concurrency)
+            .collect::<Vec<_>>()
+            .await;
 
-        let prod_task = tokio::spawn(prod);
-        let (results_res, _prod_res) = tokio::join!(recv_task, prod_task);
-        let results = results_res?;
+        let mut results = Vec::new();
+        for result in batches.into_iter().flatten() {
+            match result {
+                Ok(result) => results.push(result),
+                Err(error) => tracing::debug!(%error, "service probe failed"),
+            }
+        }
         Ok(results)
     }
 
@@ -162,27 +156,15 @@ impl ServiceDetector {
         targets: Vec<Endpoint>,
     ) -> Result<ServiceDetectionResult> {
         let start_time = Instant::now();
-        let mut tasks = vec![];
-        for endpoint in targets {
-            let endpoint = endpoint.clone();
-            let conf = self.config.clone();
-            tasks.push(tokio::spawn(async move {
-                let probe_results = Self::detect_services(conf, endpoint).await;
-                probe_results
-            }));
-        }
-        let mut results: Vec<PortProbeResult> = Vec::new();
-        for task in tasks {
-            if let Ok(r) = task.await {
-                match r {
-                    Ok(mut result) => {
-                        // Merge results
-                        results.append(&mut result);
-                    }
-                    Err(e) => {
-                        tracing::error!("Service detection failed: {}", e);
-                    }
-                }
+        // Keep probe futures owned by this call so cancellation drops their sockets.
+        let mut tasks = stream::iter(targets)
+            .map(|endpoint| Self::detect_services(self.config.clone(), endpoint))
+            .buffer_unordered(self.config.max_concurrency.max(1));
+        let mut results = Vec::new();
+        while let Some(result) = tasks.next().await {
+            match result {
+                Ok(mut batch) => results.append(&mut batch),
+                Err(error) => tracing::error!(%error, "service detection failed"),
             }
         }
         Ok(ServiceDetectionResult {
@@ -230,10 +212,10 @@ where
             Ok(Ok(0)) => break,
             // Data read
             Ok(Ok(n)) => {
-                if out.len() > max_bytes {
+                if n > max_bytes.saturating_sub(out.len()) {
                     bail!(
                         "response exceeded max_bytes ({} > {})",
-                        out.len(),
+                        out.len() + n,
                         max_bytes
                     );
                 }
@@ -252,4 +234,62 @@ where
         bail!("no response within time limits");
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::endpoint::{Port, TransportProtocol};
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn response_limit_includes_the_last_chunk() {
+        let duration = Duration::from_secs(1);
+        assert!(read_timeout(&mut &b"abcde"[..], duration, duration, 4)
+            .await
+            .is_err());
+        assert_eq!(
+            read_timeout(&mut &b"abcd"[..], duration, duration, 4)
+                .await
+                .unwrap(),
+            b"abcd"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_service_detection_closes_active_connections() {
+        crate::command::scan::init_probe_db().await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut endpoint = Endpoint::new(address.ip());
+        endpoint.upsert_port(Port::new(address.port(), TransportProtocol::Tcp));
+        let detector = ServiceDetector::new(ServiceProbeConfig {
+            timeout: Duration::from_secs(30),
+            max_concurrency: 1,
+            max_read_size: 1024,
+            sni: true,
+            skip_cert_verify: true,
+        });
+        let task =
+            tokio::spawn(async move { detector.run_service_detection(vec![endpoint]).await });
+        let (mut peer, _) = timeout(Duration::from_secs(2), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        task.abort();
+        let Err(error) = task.await else {
+            panic!("probe completed before cancellation");
+        };
+        assert!(error.is_cancelled());
+        let mut received = Vec::new();
+        if let Err(error) = timeout(Duration::from_secs(2), peer.read_to_end(&mut received))
+            .await
+            .expect("probe socket survived cancellation")
+        {
+            assert!(matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+            ));
+        }
+    }
 }

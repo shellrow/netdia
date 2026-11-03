@@ -80,9 +80,11 @@ function Exec([string]$file, [string[]]$argv, [string]$workingDir) {
   $p = New-Object System.Diagnostics.Process
   $p.StartInfo = $psi
   [void]$p.Start()
-  $stdout = $p.StandardOutput.ReadToEnd()
-  $stderr = $p.StandardError.ReadToEnd()
+  $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+  $stderrTask = $p.StandardError.ReadToEndAsync()
   $p.WaitForExit()
+  $stdout = $stdoutTask.GetAwaiter().GetResult()
+  $stderr = $stderrTask.GetAwaiter().GetResult()
 
   if ($stdout) { Write-Host $stdout.TrimEnd() }
   if ($stderr) { Write-Host $stderr.TrimEnd() -ForegroundColor Yellow }
@@ -181,6 +183,15 @@ if ($det.Msi) {
 }
 
 Write-Host ("Detected version: {0}, locale: {1}" -f $version, $locale)
+
+$expectedVersion = (Get-Content (Join-Path $RepoRoot "src-tauri/tauri.conf.json") -Raw | ConvertFrom-Json).version
+foreach ($installer in @($det.Exe, $det.Msi)) {
+  if (!$installer) { continue }
+  $parsed = if ($installer.Extension -eq ".exe") { Parse-ExeName $installer.Name } else { Parse-MsiName $installer.Name }
+  if ($parsed.Version -ne $expectedVersion) {
+    throw "Installer version does not match tauri.conf.json: $($installer.Name)"
+  }
+}
 
 Write-Section "Copy to build/"
 $copied = @()

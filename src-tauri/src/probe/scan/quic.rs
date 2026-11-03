@@ -40,7 +40,7 @@ pub async fn port_scan(
 
     let hostname_opt = setting.hostname.clone();
 
-    let mut tasks = stream::iter(ports.into_iter())
+    let mut tasks = stream::iter(ports)
         .map(|port| {
             let app = app.clone();
             let run_id = run_id.clone();

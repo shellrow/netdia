@@ -1,7 +1,5 @@
 use crate::events::EventEmitter;
-use std::net::IpAddr;
 
-use netdev::Interface;
 use tauri::AppHandle;
 
 use crate::model::scan::{
@@ -55,28 +53,8 @@ pub async fn port_scan(
     let token = operation.token.clone();
     super::validation::validate_port_scan(&setting)?;
     init_probe_db().await?;
-    let default_interface: Interface = netdev::get_default_interface()
-        .map_err(|e| format!("Failed to get default interface: {}", e))?;
-    let src_ip = match setting.ip_addr {
-        std::net::IpAddr::V4(_) => {
-            // Pick first IPv4 address of default interface
-            let ipv4 = default_interface
-                .ipv4_addrs()
-                .into_iter()
-                .next()
-                .ok_or("No IPv4 address found on default interface")?;
-            IpAddr::V4(ipv4)
-        }
-        std::net::IpAddr::V6(_) => {
-            // Pick first IPv6 address of default interface
-            let ipv6 = default_interface
-                .ipv6_addrs()
-                .into_iter()
-                .next()
-                .ok_or("No IPv6 address found on default interface")?;
-            IpAddr::V6(ipv6)
-        }
-    };
+    let src_ip = crate::net::route::source_address(setting.ip_addr)
+        .map_err(|error| format!("Failed to select a source address: {error}"))?;
 
     // Start event
     let _ = app.emit_logged(
@@ -116,35 +94,15 @@ pub async fn host_scan(
     super::validation::validate_host_scan(&setting)?;
     let scan_setting: HostScanSetting = HostScanSetting::from_request(setting);
 
-    let default_if = netdev::get_default_interface().map_err(|e| e.to_string())?;
-
-    let src_ipv4_opt = default_if
-        .ipv4_addrs()
-        .into_iter()
-        .next()
-        .map(std::net::IpAddr::V4);
-    let src_ipv6_opt = default_if
-        .ipv6_addrs()
-        .into_iter()
-        .next()
-        .map(std::net::IpAddr::V6);
-
     let _ = app.emit_logged(
         "hostscan:start",
         crate::model::scan::HostScanStartPayload {
             run_id: run_id.clone(),
         },
     );
-    crate::probe::scan::icmp::host_scan(
-        &app,
-        &run_id,
-        src_ipv4_opt,
-        src_ipv6_opt,
-        scan_setting,
-        token,
-    )
-    .await
-    .map_err(|e| e.to_string())
+    crate::probe::scan::icmp::host_scan(&app, &run_id, None, None, scan_setting, token)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

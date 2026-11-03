@@ -158,6 +158,7 @@ impl AsyncIcmpSocket {
         // Build the socket with DGRAM preferred and RAW as a fallback
         let socket = match Socket::new(domain, config.sock_type_hint.to_sock_type(), proto) {
             Ok(s) => s,
+            Err(error) if config.sock_type_hint.is_raw() => return Err(error),
             Err(_) => {
                 let alt_type = if config.sock_type_hint.is_dgram() {
                     SockType::RAW
