@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useDiagnosticRun } from "../composables/useDiagnosticRun";
-import { ref, reactive, computed, onMounted, nextTick } from "vue";
+import { ref, reactive, computed, onMounted, nextTick, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { useDiagnosticListeners } from "../composables/useDiagnosticListeners";
 import DataTable from 'primevue/datatable';
@@ -45,6 +45,13 @@ async function resolveTarget(target: string): Promise<Host> {
 }
 
 const needsPort = computed(() => ["Tcp", "Udp", "Quic", "Http"].includes(form.protocol));
+
+watch(() => form.protocol, (protocol, previousProtocol) => {
+  const previousDefaultPort = previousProtocol === "Udp" ? 33435 : 443;
+  if (form.port === previousDefaultPort) {
+    form.port = protocol === "Udp" ? 33435 : 443;
+  }
+});
 
 async function toPingSetting(): Promise<PingSetting> {
   const target = await resolveTarget(form.host);
@@ -221,6 +228,7 @@ const lossRate = computed(() => {
           <InputNumber
             v-model="form.port"
             :min="1" :max="65535"
+            :useGrouping="false"
             inputClass="w-[120px]"
             aria-label="Port" 
             size="small"
