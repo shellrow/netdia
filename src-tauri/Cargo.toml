@@ -5,7 +5,6 @@ description = "Cross-platform network diagnostic tool"
 authors = ["shellrow <shellrow@foctal.com>"]
 edition = "2021"
 repository = "https://github.com/shellrow/netdia"
-homepage = "https://github.com/shellrow/netdia"
 documentation = "https://github.com/shellrow/netdia"
 keywords = ["network"]
 categories = ["network-programming"]
@@ -46,7 +45,6 @@ os_info = { version = "3.12" }
 ndb-oui = { version = "0.4", features = ["bundled"] }
 ndb-tcp-service = { version = "0.3", features = ["bundled"] }
 ndb-udp-service = { version = "0.3", features = ["bundled"] }
-humansize = "2.1"
 url = "2.5"
 data-encoding = "2.9"
 home = { version = "0.5" }
