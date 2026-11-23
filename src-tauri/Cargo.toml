@@ -47,7 +47,7 @@ ndb-udp-service = { version = "0.4", features = ["bundled"] }
 url = "2.5"
 data-encoding = "2.9"
 home = { version = "0.5" }
-nex-packet = "0.28.1"
+nex-packet = "0.29.0"
 socket2 = { version = "0.6", features = ["all"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-native-certs = "0.8"

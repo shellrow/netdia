@@ -3358,30 +3358,6 @@ dependencies = [
 
 [[package]]
 name = "netdev"
-version = "0.47.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98a4d13f8061600697d721c5fd45262aba533a7d4a7670e7c64fd02d68e4a9fb"
-dependencies = [
- "block2",
- "dispatch2",
- "dlopen2",
- "ipnet",
- "jni 0.21.1",
- "libc",
- "mac-addr",
- "ndk-context",
- "netlink-packet-core",
- "netlink-packet-route 0.33.0",
- "netlink-sys",
- "objc2-core-foundation",
- "objc2-system-configuration",
- "once_cell",
- "plist",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "netdev"
 version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f4f5a27ff6938fbf60f38cdac74cc92c79f6311f0e1f527fcfe5529a1e2bd5fd"
@@ -3427,7 +3403,7 @@ dependencies = [
  "ndb-oui",
  "ndb-tcp-service",
  "ndb-udp-service",
- "netdev 0.48.0",
+ "netdev",
  "netlink-packet-core",
  "netlink-packet-route 0.34.0",
  "netlink-sys",
@@ -3560,22 +3536,22 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nex-core"
-version = "0.28.1"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae581a2bf8dba5672d5f0a29bd4679751514e4630feb3622c17bba2ba90fb110"
+checksum = "eb09df100ba63808bf0e615757652cee65d97f94e979d25e5fb7ee0242ab6b5a"
 dependencies = [
  "ipnet",
  "libc",
  "mac-addr",
- "netdev 0.47.0",
+ "netdev",
  "nex-sys",
 ]
 
 [[package]]
 name = "nex-packet"
-version = "0.28.1"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44be67d485e40f5b4aca06f8f48e02c1879813166bd995181d4bca28da177226"
+checksum = "432a23e9a616c9fd53ddf4125354b01e126c311df69af293624c15852b9f1f24"
 dependencies = [
  "bytes",
  "nex-core",
@@ -3583,9 +3559,9 @@ dependencies = [
 
 [[package]]
 name = "nex-sys"
-version = "0.28.1"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64fe5f418cb8376038a1a7ae48d7648ff3931771685f9f949b7f908128fa5161"
+checksum = "e7031d9ce162067ee63fccc22f8a9f3bd6141cb67b7cff4c6703006ae1ac2136"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
