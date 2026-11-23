@@ -4,7 +4,7 @@ NetDia is a desktop network diagnostic tool for macOS, Windows, and Linux,
 built with Rust and Tauri.
 
 ![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/shellrow/netdia)
-![License](https://img.shields.io/github/license/shellrow/netdia)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue)
 
 ![NetDia dashboard showing the network path and live traffic](resources/ss/nd-dashboard.png)
@@ -74,3 +74,7 @@ The dashboard above and the views below show NetDia on macOS with sample network
 ![Neighbors showing eight hosts, including the gateway and DNS server](resources/ss/nd-neighbor.png)
 
 ![Traceroute showing latency across six hops to demo.example.net](resources/ss/nd-traceroute.png)
+
+## License
+
+You may use NetDia under either the [MIT License](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE), at your option.

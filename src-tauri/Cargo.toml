@@ -8,7 +8,7 @@ repository = "https://github.com/shellrow/netdia"
 documentation = "https://github.com/shellrow/netdia"
 keywords = ["network"]
 categories = ["network-programming"]
-license = "MIT"
+license = "MIT OR Apache-2.0"
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
