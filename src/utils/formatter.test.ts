@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   fmtBps,
   fmtBytes,
@@ -32,11 +32,15 @@ describe("formatter utilities", () => {
   });
 
   it("formats Rust SystemTime payloads", () => {
-    const formatted = fmtDate({
-      secs_since_epoch: 0,
-      nanos_since_epoch: 500_000_000,
-    });
-    expect(formatted).not.toBe("-");
+    const format = vi.spyOn(Date.prototype, "toLocaleString")
+      .mockImplementation(Date.prototype.toISOString);
+    try {
+      expect(fmtDate({ secs_since_epoch: 0, nanos_since_epoch: 500_000_000 }))
+        .toBe("1970-01-01T00:00:00.500Z");
+      expect(fmtDate(null)).toBe("-");
+    } finally {
+      format.mockRestore();
+    }
   });
 
   it("shortens interface address lists", () => {
