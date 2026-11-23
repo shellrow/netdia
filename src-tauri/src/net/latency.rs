@@ -10,7 +10,7 @@ const TICK_WAIT: Duration = Duration::from_millis(120);
 pub(crate) const DEFAULT_PING_COUNT: u32 = 7;
 
 fn build_client() -> Result<Client> {
-    Client::builder()
+    crate::net::http_client_builder()
         .timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -189,7 +189,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(60)).await;
             socket.write_all(b"0\r\n\r\n").await.unwrap();
         });
-        let client = Client::builder()
+        let client = crate::net::http_client_builder()
             .no_proxy()
             .timeout(Duration::from_secs(2))
             .build()

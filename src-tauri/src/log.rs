@@ -18,11 +18,10 @@ pub fn init_logger(config: &crate::config::AppConfig) -> Result<()> {
         crate::fs::get_user_file_path(DEFAULT_LOG_FILE_NAME)
             .ok_or_else(|| anyhow!("failed to resolve default log file path"))?
     };
-    let log_file: File = if log_file_path.exists() {
-        File::options().write(true).open(&log_file_path)?
-    } else {
-        File::create(&log_file_path)?
-    };
+    let log_file = File::options()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)?;
     let error_log = std::sync::Arc::new(log_file);
 
     if cfg!(debug_assertions) {

@@ -1,6 +1,5 @@
 use crate::events::EventEmitter;
 use anyhow::Result;
-use reqwest::Client;
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
@@ -55,7 +54,7 @@ pub async fn http_ping(
 ) -> Result<PingStat> {
     // Build HTTP client
     let per_req_to = Duration::from_millis(setting.timeout_ms);
-    let client = Client::builder()
+    let client = crate::net::http_client_builder()
         .user_agent(DEFAULT_USER_AGENT_CHROME)
         .danger_accept_invalid_certs(true)
         .pool_idle_timeout(Some(Duration::from_secs(5)))

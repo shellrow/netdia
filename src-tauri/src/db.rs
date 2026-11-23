@@ -208,7 +208,8 @@ impl DatabaseState {
         };
         state.initialize_schema().await?;
         state.migrate_legacy_config_if_needed(legacy).await?;
-        state.ensure_default_ui_preferences().await?;
+        // Missing preference keys use their defaults. Validate existing values without rewriting them.
+        state.load_ui_preferences().await?;
         Ok(state)
     }
 
@@ -295,19 +296,14 @@ impl DatabaseState {
             return Ok(());
         }
 
-        let legacy = legacy_path.and_then(AppConfig::load_legacy_from_path);
-        let config = legacy.unwrap_or_default();
-        self.save_app_config(&config).await?;
-        Ok(())
-    }
-
-    async fn ensure_default_ui_preferences(&self) -> Result<()> {
-        let defaults = UiPreferences::default();
-        let current = self.load_ui_preferences().await?;
-        if current == defaults {
-            self.replace_ui_preferences(&defaults).await?;
-        }
-        Ok(())
+        let config = match legacy_path {
+            Some(path) => AppConfig::load_legacy_from_path(path)?.unwrap_or_default(),
+            None => AppConfig::default(),
+        };
+        crate::command::validation::validate_config(&config)
+            .map_err(anyhow::Error::msg)
+            .context("Invalid initial app configuration")?;
+        self.write_app_config(&config, false).await
     }
 
     async fn app_config_exists(&self) -> Result<bool> {
@@ -365,13 +361,17 @@ impl DatabaseState {
             }),
             None => {
                 let config = AppConfig::default();
-                self.save_app_config(&config).await?;
+                self.write_app_config(&config, false).await?;
                 Ok(config)
             }
         }
     }
 
     pub async fn save_app_config(&self, cfg: &AppConfig) -> Result<()> {
+        self.write_app_config(cfg, true).await
+    }
+
+    async fn write_app_config(&self, cfg: &AppConfig, replace_existing: bool) -> Result<()> {
         let conn = self.connect()?;
         conn.execute(
             r#"
@@ -399,6 +399,7 @@ impl DatabaseState {
                 auto_internet_check = excluded.auto_internet_check,
                 auto_internet_check_interval_s = excluded.auto_internet_check_interval_s,
                 auto_update_check = excluded.auto_update_check
+            WHERE ?12
             "#,
             (
                 1_i64,
@@ -412,6 +413,7 @@ impl DatabaseState {
                 cfg.auto_internet_check,
                 cfg.auto_internet_check_interval_s as i64,
                 cfg.auto_update_check,
+                replace_existing,
             ),
         )
         .await
@@ -463,17 +465,6 @@ impl DatabaseState {
         }
 
         Ok(prefs)
-    }
-
-    pub async fn replace_ui_preferences(&self, prefs: &UiPreferences) -> Result<()> {
-        let patch = UiPreferencesPatch {
-            sidebar_compact: Some(prefs.sidebar_compact),
-            last_dns_query: Some(prefs.last_dns_query.clone()),
-            public_ip_visible: Some(prefs.public_ip_visible),
-            hostname_visible: Some(prefs.hostname_visible),
-        };
-        self.patch_ui_preferences(patch).await?;
-        Ok(())
     }
 
     pub async fn patch_ui_preferences(&self, patch: UiPreferencesPatch) -> Result<UiPreferences> {
@@ -866,6 +857,31 @@ mod recovery_tests {
         std::fs::write(&path, &bytes).unwrap();
         assert!(DatabaseState::initialize_at(&path, None).await.is_err());
         assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+
+    #[tokio::test]
+    async fn legacy_config_can_be_corrected_after_a_failed_import() {
+        let directory = TestDirectory::new();
+        let path = directory.database();
+        let legacy = directory.0.join(LEGACY_CONFIG_FILE_NAME);
+        std::fs::write(&legacy, b"{").unwrap();
+        assert!(DatabaseState::initialize_at(&path, Some(&legacy))
+            .await
+            .is_err());
+        let mut config = AppConfig {
+            theme: "invalid".into(),
+            ..Default::default()
+        };
+        std::fs::write(&legacy, serde_json::to_vec(&config).unwrap()).unwrap();
+        assert!(DatabaseState::initialize_at(&path, Some(&legacy))
+            .await
+            .is_err());
+        config.theme = "light".into();
+        std::fs::write(&legacy, serde_json::to_vec(&config).unwrap()).unwrap();
+        let db = DatabaseState::initialize_at(&path, Some(&legacy))
+            .await
+            .unwrap();
+        assert_eq!(db.load_app_config().await.unwrap().theme, "light");
     }
 
     #[tokio::test]

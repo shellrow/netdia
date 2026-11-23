@@ -3,6 +3,18 @@ use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use std::sync::Arc;
 
+pub(crate) fn native_roots() -> Result<rustls::RootCertStore> {
+    let native = rustls_native_certs::load_native_certs();
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add_parsable_certificates(native.certs);
+    if roots.is_empty() {
+        if let Some(error) = native.errors.into_iter().next() {
+            return Err(error.into());
+        }
+    }
+    Ok(roots)
+}
+
 /// Dummy certificate verifier that treats any certificate as valid.
 /// NOTE, such verification is vulnerable to MITM attacks, but convenient for testing.
 #[derive(Debug)]

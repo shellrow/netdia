@@ -74,7 +74,7 @@ async fn server(response: Option<&str>, delay: Duration) -> Server {
     }
 }
 fn client() -> Client {
-    Client::builder()
+    crate::net::http_client_builder()
         .no_proxy()
         .timeout(Duration::from_secs(3))
         .build()

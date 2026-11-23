@@ -4,10 +4,7 @@ use anyhow::Result;
 use rustls_pki_types::ServerName;
 use std::sync::Arc;
 use tokio::{io::AsyncWriteExt, net::TcpStream, time::timeout};
-use tokio_rustls::{
-    rustls::{ClientConfig, RootCertStore},
-    TlsConnector,
-};
+use tokio_rustls::{rustls::ClientConfig, TlsConnector};
 
 use super::tls::SkipServerVerification;
 use crate::probe::service::payload::{PayloadBuilder, PayloadContext};
@@ -163,10 +160,7 @@ impl HttpProbe {
                 let payload: Vec<u8> = payload_builder.payload(payload_ctx)?;
 
                 // rustls config
-                let mut roots = RootCertStore::empty();
-                for cert in rustls_native_certs::load_native_certs()? {
-                    let _ = roots.add(cert);
-                }
+                let roots = crate::socket::tls::native_roots()?;
                 let mut config = ClientConfig::builder()
                     .with_root_certificates(roots)
                     .with_no_client_auth();

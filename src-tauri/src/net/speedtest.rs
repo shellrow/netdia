@@ -14,7 +14,6 @@ use crate::operation::RunEmitter;
 use anyhow::{bail, ensure, Context, Result};
 use bytes::Bytes;
 use futures_util::{stream::FuturesUnordered, StreamExt};
-use rand::RngCore;
 use reqwest::{header, Client, Response, StatusCode};
 use serde::Deserialize;
 
@@ -91,7 +90,7 @@ pub(crate) fn size_label_for_bytes(target_bytes: u64) -> Option<&'static str> {
 }
 
 fn build_client(max_duration: Duration) -> Result<Client> {
-    Client::builder()
+    crate::net::http_client_builder()
         .timeout(max_duration.max(TOKEN_TIMEOUT))
         .redirect(reqwest::redirect::Policy::none())
         .no_gzip()
@@ -253,7 +252,7 @@ async fn run_transfers(
     let transferred = Arc::new(AtomicU64::new(0));
     let upload_chunk = if matches!(setting.direction, SpeedtestDirection::Upload) {
         let mut bytes = vec![0; CHUNK_SIZE];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        rand::fill(&mut bytes);
         Bytes::from(bytes)
     } else {
         Bytes::new()

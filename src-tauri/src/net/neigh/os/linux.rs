@@ -213,24 +213,20 @@ fn read_proc_net_arp() -> io::Result<HashMap<IpAddr, MacAddr>> {
 /// Dump neighbour(ARP/NDP) table via netlink.
 /// If fails, fallback to read /proc/net/arp
 pub fn get_neighbor_table() -> io::Result<HashMap<IpAddr, MacAddr>> {
-    // netlink
-    if let Ok(neighs) = dump_neigh() {
-        if let Ok(m) = neighs_to_map(neighs) {
-            if !m.is_empty() {
-                return Ok(m);
-            }
-        }
+    match dump_neigh() {
+        Ok(neighbours) => Ok(neighs_to_map(neighbours)),
+        Err(netlink_error) => read_proc_net_arp().map_err(|arp_error| {
+            io::Error::new(
+                arp_error.kind(),
+                format!(
+                    "netlink neighbour dump failed: {netlink_error}; /proc/net/arp: {arp_error}"
+                ),
+            )
+        }),
     }
-    // fallback: /proc/net/arp
-    if let Ok(m) = read_proc_net_arp() {
-        if !m.is_empty() {
-            return Ok(m);
-        }
-    }
-    Ok(HashMap::new())
 }
 
-fn neighs_to_map(neighs: Vec<NeighbourMessage>) -> io::Result<HashMap<IpAddr, MacAddr>> {
+fn neighs_to_map(neighs: Vec<NeighbourMessage>) -> HashMap<IpAddr, MacAddr> {
     let mut map = HashMap::new();
 
     for n in neighs {
@@ -242,7 +238,7 @@ fn neighs_to_map(neighs: Vec<NeighbourMessage>) -> io::Result<HashMap<IpAddr, Ma
                 NeighbourAttribute::Destination(a) => {
                     ip = neigh_addr_to_ip(a);
                 }
-                NeighbourAttribute::LinkLocalAddress(bytes) if bytes.len() == 6 => {
+                NeighbourAttribute::LinkLayerAddress(bytes) if bytes.len() == 6 => {
                     mac = Some([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]]);
                 }
                 _ => {}
@@ -254,5 +250,5 @@ fn neighs_to_map(neighs: Vec<NeighbourMessage>) -> io::Result<HashMap<IpAddr, Ma
         }
     }
 
-    Ok(map)
+    map
 }

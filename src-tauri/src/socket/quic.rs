@@ -1,15 +1,12 @@
 use super::tls::SkipServerVerification;
 use anyhow::Result;
 use quinn::{ClientConfig, Endpoint as QuinnEndpoint};
-use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
+use rustls::ClientConfig as RustlsClientConfig;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 /// Create a QUIC client configuration with optional certificate verification skipping and ALPN protocols.
 pub fn quic_client_config(skip_verify: bool, alpn: &[Vec<u8>]) -> Result<ClientConfig> {
-    let mut roots = RootCertStore::empty();
-    for cert in rustls_native_certs::load_native_certs()? {
-        let _ = roots.add(cert);
-    }
+    let roots = crate::socket::tls::native_roots()?;
     let mut tls = RustlsClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
