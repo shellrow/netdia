@@ -7,7 +7,7 @@ built with Rust and Tauri.
 ![License](https://img.shields.io/github/license/shellrow/netdia)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue)
 
-![NetDia Dashboard](resources/ss/nd-dashboard.png)
+![NetDia dashboard showing the network path and live traffic](resources/ss/nd-dashboard.png)
 
 ## Features
 
@@ -36,8 +36,9 @@ AppImage GPG signing-key fingerprint:
 
 ## Build from source
 
-Install a current stable Rust toolchain, Node.js 22 LTS (22.12 or later), and the
+Install a current stable Rust toolchain and the
 [Tauri system prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
+For Node.js, use 22.22 or later in the 22.x series, or 24.11 or later in the 24.x series.
 
 Clone the repository and install frontend dependencies. These steps are required
 for both CLI options below.
@@ -66,6 +67,10 @@ Both options use npm to start or build the frontend automatically.
 
 ## Screenshots
 
-![NetDia Monitor](resources/ss/nd-monitor.png)
-![NetDia Traceroute](resources/ss/nd-traceroute.png)
-![NetDia Neighbor](resources/ss/nd-neighbor.png)
+The dashboard above and the views below show NetDia on macOS with sample network data.
+
+![Traffic Monitor comparing receive and transmit rates across six interfaces](resources/ss/nd-monitor.png)
+
+![Neighbors showing eight hosts, including the gateway and DNS server](resources/ss/nd-neighbor.png)
+
+![Traceroute showing latency across six hops to demo.example.net](resources/ss/nd-traceroute.png)
