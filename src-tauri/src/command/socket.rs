@@ -17,3 +17,18 @@ pub fn get_sockets_all() -> Result<Vec<SocketInfo>, String> {
     // Directly return the result as JSON since SocketInfo implements Serialize.
     Ok(sockets)
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn lists_a_local_tcp_listener() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let sockets = super::get_sockets_all().unwrap();
+        assert!(sockets.iter().any(|socket| {
+            socket.is_tcp()
+                && socket.local_addr() == address.ip()
+                && socket.local_port() == address.port()
+        }));
+    }
+}

@@ -80,7 +80,7 @@ fn is_ipv6(info: &IpInfo) -> bool {
 
 /// Get public IP information (both IPv4 and IPv6 if available)
 pub async fn get_public_ip() -> Result<IpInfoDual> {
-    let client = Client::builder()
+    let client = crate::net::http_client_builder()
         .timeout(Duration::from_secs(2))
         .build()
         .context("build http client")?;

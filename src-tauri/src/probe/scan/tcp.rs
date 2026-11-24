@@ -1,7 +1,7 @@
 use crate::events::EventEmitter;
 use anyhow::Result;
 use futures::{stream, StreamExt};
-use rand::{seq::SliceRandom, thread_rng};
+use rand::{rng, seq::SliceRandom};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -27,7 +27,7 @@ pub async fn port_scan(
 ) -> Result<PortScanReport> {
     let mut ports = expand_ports(&setting.target_ports_preset, &setting.user_ports);
     if !setting.ordered {
-        ports.shuffle(&mut thread_rng());
+        ports.shuffle(&mut rng());
     }
 
     let app = app.clone();

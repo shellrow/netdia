@@ -1,7 +1,7 @@
 use crate::events::EventEmitter;
 use anyhow::Result;
 use futures::{stream, StreamExt};
-use rand::{seq::SliceRandom, thread_rng, Rng};
+use rand::{rng, seq::SliceRandom};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -78,7 +78,7 @@ pub async fn host_scan(
         .unwrap_or_else(|| "netd".to_string());
     let concurrency = setting.concurrency.unwrap_or(hosts_concurrency());
     if !setting.ordered {
-        setting.targets.shuffle(&mut thread_rng());
+        setting.targets.shuffle(&mut rng());
     }
 
     // resolve
@@ -183,7 +183,7 @@ pub async fn host_scan(
                             return None;
                         }
 
-                        let id = match sock.echo_identifier(rand::thread_rng().gen()) {
+                        let id = match sock.echo_identifier(rand::random()) {
                             Ok(id) => id,
                             Err(error) => {
                                 last_err = Some(error.to_string());

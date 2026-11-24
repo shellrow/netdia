@@ -61,6 +61,10 @@ async function fetchRoutes() {
   }
 }
 
+function routeLabel(value: string | { Other: string } | null | undefined) {
+  return typeof value === "string" ? value : value?.Other;
+}
+
 const filtered = computed(() => {
   let xs = routes.value;
   if (family.value !== "All") {
@@ -73,9 +77,9 @@ const filtered = computed(() => {
       cidr(r.destination.addr, r.destination.prefix_len),
       r.gateway ?? "",
       r.ifname ?? "",
-      (r.flags ?? []).join(" "),
-      r.protocol ?? "",
-      r.scope ?? "",
+      (r.flags ?? []).map(routeLabel).join(" "),
+      routeLabel(r.protocol),
+      routeLabel(r.scope),
     ].join(" ").toLowerCase();
     return hay.includes(s);
   });
@@ -172,11 +176,11 @@ onBeforeUnmount(() => {
       </Column>
 
       <Column field="protocol" header="Proto" sortable style="width: 120px">
-        <template #body="{ data }">{{ data.protocol ?? '-' }}</template>
+        <template #body="{ data }">{{ routeLabel(data.protocol) ?? '-' }}</template>
       </Column>
 
       <Column field="scope" header="Scope" sortable style="width: 110px">
-        <template #body="{ data }">{{ data.scope ?? '-' }}</template>
+        <template #body="{ data }">{{ routeLabel(data.scope) ?? '-' }}</template>
       </Column>
 
       <Column field="lifetime_ms" header="Expire" sortable style="width: 110px">

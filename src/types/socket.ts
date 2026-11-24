@@ -3,7 +3,7 @@ export type TcpState =
   | "Closed"
   | "Listen"
   | "SynSent"
-  | "SynRecv"
+  | "SynReceived"
   | "Established"
   | "FinWait1"
   | "FinWait2"
@@ -11,6 +11,7 @@ export type TcpState =
   | "Closing"
   | "LastAck"
   | "TimeWait"
+  | "DeleteTcb"
   | "Unknown";
 
 export type ProcessEntry = {
@@ -38,6 +39,6 @@ export type ProtocolSocketInfo =
 export type SocketInfo = {
   protocol_socket_info: ProtocolSocketInfo;
   processes: ProcessEntry[];
-  inode: number;
-  uid: number;
+  inode?: number;
+  uid?: number;
 };

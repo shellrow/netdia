@@ -104,16 +104,16 @@ export type RouteProtocol =
   | "Autostatic"
   | "StaticNonDod"
   | "Rpl"
-  | { other: string };
+  | { Other: string };
 
-// RouteScope (Rust: enum | Other(u8))
+// RouteScope (Rust: enum | Other(String))
 export type RouteScope =
   | "Global"
   | "Site"
   | "Link"
   | "Host"
   | "Nowhere"
-  | { other: number };
+  | { Other: string };
 
 // RouteEntry (Rust: struct RouteEntry)
 export type RouteEntry = {

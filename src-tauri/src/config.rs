@@ -57,20 +57,18 @@ impl AppConfig {
             auto_update_check: true,
         }
     }
-    pub fn load_legacy_from_path(path: &Path) -> Option<AppConfig> {
-        match std::fs::read_to_string(path) {
-            Ok(content) => match serde_json::from_str(&content) {
-                Ok(config) => Some(config),
-                Err(e) => {
-                    tracing::error!("Failed to parse legacy config file: {:?}", e);
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::error!("Failed to read legacy config file: {:?}", e);
-                None
+    pub fn load_legacy_from_path(path: &Path) -> anyhow::Result<Option<Self>> {
+        use anyhow::Context;
+        let content = match std::fs::read(path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error).with_context(|| format!("Failed to read {}", path.display()))
             }
-        }
+        };
+        serde_json::from_slice(&content)
+            .map(Some)
+            .with_context(|| format!("Failed to parse {}", path.display()))
     }
 }
 

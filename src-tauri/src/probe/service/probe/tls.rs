@@ -8,10 +8,7 @@ use rustls::ClientConnection;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::{net::TcpStream, time::timeout};
-use tokio_rustls::{
-    rustls::{ClientConfig, RootCertStore},
-    TlsConnector,
-};
+use tokio_rustls::{rustls::ClientConfig, TlsConnector};
 use x509_parser::prelude::{FromDer, ParsedExtension, X509Certificate};
 
 /// Dummy certificate verifier that treats any certificate as valid.
@@ -157,10 +154,7 @@ impl TlsProbe {
         let tcp_stream = timeout(ctx.timeout, TcpStream::connect(addr)).await??;
 
         // rustls config
-        let mut roots = RootCertStore::empty();
-        for cert in rustls_native_certs::load_native_certs()? {
-            let _ = roots.add(cert);
-        }
+        let roots = crate::socket::tls::native_roots()?;
         let mut config = ClientConfig::builder()
             .with_root_certificates(roots)
             .with_no_client_auth();

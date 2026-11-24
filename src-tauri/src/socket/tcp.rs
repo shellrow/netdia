@@ -190,10 +190,10 @@ impl AsyncTcpSocket {
             socket.set_reuse_address(flag)?;
         }
         if let Some(flag) = config.nodelay {
-            socket.set_nodelay(flag)?;
+            socket.set_tcp_nodelay(flag)?;
         }
         if let Some(ttl) = config.ttl {
-            socket.set_ttl(ttl)?;
+            socket.set_ttl_v4(ttl)?;
         }
         if let Some(hoplimit) = config.hoplimit {
             socket.set_unicast_hops_v6(hoplimit)?;
@@ -336,7 +336,7 @@ impl AsyncTcpSocket {
 
     /// Set no delay option for TCP.
     pub fn set_nodelay(&self, on: bool) -> io::Result<()> {
-        self.socket.set_nodelay(on)
+        self.socket.set_tcp_nodelay(on)
     }
 
     /// Set linger option for the socket.
@@ -346,7 +346,7 @@ impl AsyncTcpSocket {
 
     /// Set the time-to-live for IPv4 packets.
     pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
-        self.socket.set_ttl(ttl)
+        self.socket.set_ttl_v4(ttl)
     }
 
     /// Set the hop limit for IPv6 packets.

@@ -53,10 +53,10 @@ function scheduleRecalc() {
 
 // netsock protocol helpers
 function isTcp(p: ProtocolSocketInfo): p is { Tcp: TcpSocketInfo } {
-  return (p as any).Tcp != null;
+  return "Tcp" in p;
 }
 function isUdp(p: ProtocolSocketInfo): p is { Udp: UdpSocketInfo } {
-  return (p as any).Udp != null;
+  return "Udp" in p;
 }
 function addrFamily(addr: string): "Ipv4" | "Ipv6" {
   // simple heuristic: IPv6 contains ':'
@@ -88,14 +88,6 @@ function remoteTuple(si: ProtocolSocketInfo): [string | null, number | null] {
 function tcpState(si: ProtocolSocketInfo): string | null {
   return isTcp(si) ? si.Tcp.state : null;
 }
-function rowKey(s: SocketInfo): string {
-  const p = s.protocol_socket_info;
-  if (isTcp(p)) {
-    return `T-${p.Tcp.local_addr}:${p.Tcp.local_port}-${p.Tcp.remote_addr}:${p.Tcp.remote_port}-${s.inode}-${s.uid}`;
-  }
-  return `U-${p.Udp.local_addr}:${p.Udp.local_port}-${s.inode}-${s.uid}`;
-}
-
 async function fetchSockets() {
   loading.value = true;
   error.value = null;
@@ -150,8 +142,8 @@ const filtered = computed(() => {
       ra ?? "",
       rp != null ? String(rp) : "",
       state,
-      String(skt.uid),
-      String(skt.inode),
+      skt.uid,
+      skt.inode,
       proc,
     ]
       .join(" ")
@@ -283,7 +275,6 @@ onBeforeUnmount(() => {
       :value="tableRows"
       size="small"
       :loading="loading"
-      :rowKey="rowKey"
       paginator
       :rows="20"
       :rowsPerPageOptions="[20, 50, 100]"
@@ -341,7 +332,9 @@ onBeforeUnmount(() => {
         </template>
       </Column>
 
-      <Column field="uid" header="UID" style="width: 100px" sortable />
+      <Column field="uid" header="UID" style="width: 100px" sortable>
+        <template #body="{ data }">{{ data.uid ?? "-" }}</template>
+      </Column>
     </DataTable>
   </div>
 </template>
